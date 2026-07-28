@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LingoPDF - Intelligent PDF Layout Translator</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- PDF.js Styles & Script -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- HEADER -->
+        <header class="app-header">
+            <div class="header-logo">
+                <div class="logo-icon"><i data-lucide="languages"></i></div>
+                <div class="logo-text">
+                    <h1>LingoPDF</h1>
+                    <span>Intelligent Layout Translator</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="btn-help" class="btn btn-secondary">
+                    <i data-lucide="help-circle"></i> Help & Manual
+                </button>
+                <div class="status-badge" id="ocr-status">
+                    <span class="status-dot"></span> OCR Backend: Ready
+                </div>
+                <div class="status-badge" id="llm-status">
+                    <span class="status-dot"></span> LLM API: Disconnected
+                </div>
+            </div>
+        </header>
+
+        <!-- MAIN LAYOUT -->
+        <main class="app-main">
+            <!-- LEFT PANEL: PDF VIEWER -->
+            <section class="panel panel-pdf">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <i data-lucide="file-text"></i> PDF Workspace
+                    </div>
+                    <div class="pdf-controls" id="pdf-controls" style="display: none;">
+                        <button id="zoom-out" class="btn btn-icon" title="Zoom Out"><i data-lucide="zoom-out"></i></button>
+                        <span id="zoom-value">100%</span>
+                        <button id="zoom-in" class="btn btn-icon" title="Zoom In"><i data-lucide="zoom-in"></i></button>
+                        <span class="divider"></span>
+                        <button id="prev-page" class="btn btn-icon" title="Previous Page"><i data-lucide="chevron-left"></i></button>
+                        <span id="page-num-display">Page 1 / 1</span>
+                        <button id="next-page" class="btn btn-icon" title="Next Page"><i data-lucide="chevron-right"></i></button>
+                        <span class="divider"></span>
+                        <button id="btn-close-pdf" class="btn btn-icon btn-danger" title="Close PDF"><i data-lucide="x"></i></button>
+                    </div>
+                </div>
+
+                <div class="panel-body pdf-viewer-container" id="pdf-container">
+                    <!-- Drop Zone (Initial State) -->
+                    <div class="upload-dropzone" id="dropzone">
+                        <div class="dropzone-icon">
+                            <i data-lucide="upload-cloud"></i>
+                        </div>
+                        <h3>Upload your PDF document</h3>
+                        <p>Drag and drop your PDF here, or click to browse</p>
+                        <input type="file" id="pdf-file-input" accept="application/pdf" style="display: none;">
+                        <button class="btn btn-primary" onclick="document.getElementById('pdf-file-input').click()">
+                            Browse Files
+                        </button>
+                    </div>
+
+                    <!-- PDF Pages Canvas Render Container -->
+                    <div id="pdf-render-area" class="pdf-render-area" style="display: none;"></div>
+                </div>
+            </section>
+
+            <!-- RIGHT PANEL: CONTROLS & CHAT -->
+            <section class="panel panel-controls">
+                <nav class="tabs-nav">
+                    <button class="tab-btn active" data-tab="tab-translate">
+                        <i data-lucide="globe"></i> Translate
+                    </button>
+                    <button class="tab-btn" data-tab="tab-chat">
+                        <i data-lucide="message-square"></i> LLM Chat
+                    </button>
+                    <button class="tab-btn" data-tab="tab-config">
+                        <i data-lucide="settings"></i> Configuration
+                    </button>
+                </nav>
+
+                <div class="panel-body tab-content-container">
+                    <!-- TAB 1: TRANSLATE -->
+                    <div class="tab-content active" id="tab-translate">
+                        <div class="control-group">
+                            <label for="target-lang-select">Target Language</label>
+                            <div class="select-wrapper">
+                                <select id="target-lang-select">
+                                    <option value="English">English</option>
+                                    <option value="Spanish">Spanish (Español)</option>
+                                    <option value="French">French (Français)</option>
+                                    <option value="German">German (Deutsch)</option>
+                                    <option value="Chinese (Simplified)">Chinese Simplified (中文)</option>
+                                    <option value="Japanese">Japanese (日本語)</option>
+                                    <option value="Russian">Russian (Русский)</option>
+                                    <option value="Persian">Persian (فارسی)</option>
+                                    <option value="Arabic">Arabic (العربية)</option>
+                                    <option value="Turkish">Turkish (Türkçe)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="translate-actions">
+                            <button id="btn-run-ocr" class="btn btn-primary btn-block">
+                                <i data-lucide="cpu"></i> Extract PDF Layout Text
+                            </button>
+                            <button id="btn-translate-doc" class="btn btn-secondary btn-block" disabled>
+                                <i data-lucide="globe"></i> Translate Entire Document
+                            </button>
+                        </div>
+
+                        <div id="ocr-progress-container" class="progress-container" style="display: none;">
+                            <div class="progress-header">
+                                <span id="progress-status-text">Processing Layout...</span>
+                                <span id="progress-pct">0%</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <!-- Translation Progress Bar -->
+                        <div id="translation-progress-container" class="progress-container" style="display: none; margin-top: 10px;">
+                            <div class="progress-header">
+                                <span id="trans-progress-status-text">Translating chunk 1 of 5...</span>
+                                <span id="trans-progress-pct">0%</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div id="trans-progress-bar-fill" class="progress-bar-fill" style="width: 0%;"></div>
+                            </div>
+                            <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
+                                <button id="btn-cancel-translation" class="btn btn-secondary btn-icon-small" style="font-size: 11px; padding: 4px 8px; height: 26px; display: flex; align-items: center; gap: 4px;">
+                                    <i data-lucide="x-circle"></i> Cancel Translation
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="translation-layout-view">
+                            <div class="text-pane">
+                                <div class="pane-header">
+                                    <span>Detected Markdown / Text</span>
+                                    <button class="btn btn-icon-small" id="btn-copy-ocr" title="Copy Text"><i data-lucide="copy"></i></button>
+                                </div>
+                                <textarea id="txt-detected" readonly placeholder="Parsed PDF text using Marker layout detection will appear here..."></textarea>
+                            </div>
+                            <div class="text-pane">
+                                <div class="pane-header">
+                                    <span>Translated Output</span>
+                                    <button class="btn btn-icon-small" id="btn-copy-translated" title="Copy Translation"><i data-lucide="copy"></i></button>
+                                </div>
+                                <textarea id="txt-translated" readonly placeholder="Translated output in Markdown will appear here..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 2: CHAT -->
+                    <div class="tab-content" id="tab-chat">
+                        <div class="chat-container">
+                            <div class="chat-messages" id="chat-box">
+                                <div class="chat-message assistant">
+                                    <div class="msg-avatar"><i data-lucide="bot"></i></div>
+                                    <div class="msg-content">
+                                        Hello! I'm your document assistant. Upload a PDF, extract the text layout, or select any text block, and ask me questions about it!
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="chat-context-banner" id="chat-context-banner" style="display: none;">
+                                <div class="context-info">
+                                    <i data-lucide="link"></i>
+                                    <span>Reference context attached (Selection)</span>
+                                </div>
+                                <button class="btn-clear-context" id="btn-clear-context"><i data-lucide="x"></i></button>
+                            </div>
+
+                            <div class="chat-input-area">
+                                <textarea id="chat-input" placeholder="Type a message or ask about the document..."></textarea>
+                                <button id="btn-send-chat" class="btn btn-primary"><i data-lucide="send"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 3: CONFIGURATION -->
+                    <div class="tab-content" id="tab-config">
+                        <div class="config-section">
+                            <h3>Layout Extraction & OCR</h3>
+                            <div class="control-group">
+                                <label>OCR / Extraction Mode</label>
+                                <div class="radio-group">
+                                    <label class="radio-label">
+                                        <input type="radio" name="ocr-mode" value="fallback" checked>
+                                        <span>PyMuPDF (Fast Fallback)</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="ocr-mode" value="datalab">
+                                        <span>Datalab API (Cloud Marker)</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="ocr-mode" value="local">
+                                        <span>Marker (Local Model CLI)</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="control-group config-toggleable" id="group-datalab-key" style="display: none;">
+                                <label for="datalab-api-key">Datalab API Key</label>
+                                <input type="password" id="datalab-api-key" placeholder="Enter your datalab.to API key...">
+                            </div>
+                            
+                            <!-- Local Model Installer UI -->
+                            <div class="installer-card" id="local-installer-card" style="display: none;">
+                                <div class="installer-title">
+                                    <i data-lucide="download"></i>
+                                    <span id="inst-status-label">Local Model Installer</span>
+                                </div>
+                                <div class="progress-bar-bg" style="height: 6px; margin: 4px 0;">
+                                    <div id="inst-progress-bar" class="progress-bar-fill" style="width: 0%;"></div>
+                                </div>
+                                <div class="installer-details">
+                                    <span id="inst-file-name">Not downloading</span>
+                                    <span id="inst-pct-speed">0% (0 KB/s)</span>
+                                </div>
+                                <div class="installer-controls">
+                                    <button id="btn-inst-start" class="btn btn-primary btn-block"><i data-lucide="download-cloud"></i> Install Local Models</button>
+                                    <button id="btn-inst-pause" class="btn btn-secondary" style="display: none;"><i data-lucide="pause"></i> Pause</button>
+                                    <button id="btn-inst-cancel" class="btn btn-secondary" style="display: none;"><i data-lucide="x-circle"></i> Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="config-section">
+                            <h3>LLM Translation Engine</h3>
+                            <div class="control-group">
+                                <label for="llm-provider">Provider</label>
+                                <div class="model-select-container">
+                                    <div class="select-wrapper">
+                                        <select id="llm-provider">
+                                            <option value="ollama">Ollama (Local Models)</option>
+                                            <option value="openai">OpenAI (ChatGPT)</option>
+                                            <option value="gemini">Google Gemini</option>
+                                            <option value="anthropic">Anthropic Claude</option>
+                                            <option value="deepseek">DeepSeek API</option>
+                                        </select>
+                                    </div>
+                                    <button id="btn-add-custom-provider" class="btn btn-secondary btn-icon-small" title="Add Custom Provider"><i data-lucide="plus"></i></button>
+                                    <button id="btn-delete-custom-provider" class="btn btn-secondary btn-icon-small btn-danger-hover" title="Delete Custom Provider" style="display: none;"><i data-lucide="trash-2"></i></button>
+                                </div>
+                            </div>
+                            <div class="control-group" id="group-llm-url">
+                                <label for="llm-api-url">API Endpoint URL</label>
+                                <input type="text" id="llm-api-url" value="http://127.0.0.1:11434" placeholder="API Base URL...">
+                            </div>
+                            <div class="control-group" id="group-llm-key" style="display: none;">
+                                <label for="llm-api-key">API Key</label>
+                                <input type="password" id="llm-api-key" placeholder="Enter provider API key...">
+                            </div>
+                            <div class="control-group">
+                                <label for="llm-model-select">Model</label>
+                                <div class="model-select-container">
+                                    <div class="select-wrapper">
+                                        <select id="llm-model-select"></select>
+                                    </div>
+                                    <input type="text" id="llm-model-custom" placeholder="Or type model name..." style="display: none;">
+                                    <button id="btn-refresh-models" class="btn btn-secondary btn-icon-small" title="Fetch Online Models"><i data-lucide="refresh-cw"></i></button>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <div class="connection-test-container">
+                                    <button id="btn-test-connection" class="btn btn-secondary">
+                                        <i data-lucide="activity"></i> Test Connection
+                                    </button>
+                                    <div id="connection-test-result" class="connection-test-result"></div>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label for="custom-instructions">Custom Translation Instructions</label>
+                                <textarea id="custom-instructions" placeholder="e.g., Maintain the tone, keep mathematical expressions in LaTeX syntax, do not translate technical terms like 'gradient descent' ..."></textarea>
+                            </div>
+                            
+                            <div style="display: flex; gap: 12px; margin-top: 12px;">
+                                <div class="control-group" style="flex: 1; margin-bottom: 0;">
+                                    <label for="translation-chunk-size">Translation Chunk Size (Chars)</label>
+                                    <input type="number" id="translation-chunk-size" value="2500" min="500" max="25000" step="500" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background-color: var(--bg-input); color: var(--color-text-main);">
+                                </div>
+                                <div class="control-group" style="flex: 1; margin-bottom: 0;">
+                                    <label for="translation-delay">Request Delay (Seconds)</label>
+                                    <input type="number" id="translation-delay" value="1.0" min="0.0" max="60.0" step="0.5" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background-color: var(--bg-input); color: var(--color-text-main);">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="config-section">
+                            <h3>Proxy Settings</h3>
+                            <div class="control-group flex-row">
+                                <label for="enable-proxy">Enable Proxy Routing</label>
+                                <label class="switch">
+                                    <input type="checkbox" id="enable-proxy">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="control-group" id="group-proxy-config" style="display: none;">
+                                <label for="proxy-url">Proxy Server URL</label>
+                                <input type="text" id="proxy-url" value="127.0.0.1:1080" placeholder="e.g. socks5://127.0.0.1:1080 or http://127.0.0.1:8080">
+                                <span class="help-text">SOCKS5, SOCKS4, and HTTP/HTTPS proxies are supported. Default is 127.0.0.1:1080. Localhost LLM endpoints automatically bypass the proxy.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- FLOATING SELECTION TOOLTIP -->
+        <div id="selection-tooltip" class="selection-tooltip" style="display: none;">
+            <button id="btn-tooltip-translate"><i data-lucide="languages"></i> Translate Selection</button>
+            <button id="btn-tooltip-chat"><i data-lucide="message-square"></i> Send to Chat</button>
+        </div>
+
+        <!-- ADD CUSTOM PROVIDER MODAL -->
+        <div class="modal" id="custom-provider-modal" style="display: none;">
+            <div class="modal-content" style="max-width: 450px;">
+                <div class="modal-header">
+                    <h2>Add Custom LLM Provider</h2>
+                    <button class="close-modal-btn" id="btn-close-custom-provider-modal"><i data-lucide="x"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div class="control-group" style="margin-bottom: 16px;">
+                        <label for="custom-provider-name" style="display: block; margin-bottom: 6px; font-weight: 500;">Provider Name</label>
+                        <input type="text" id="custom-provider-name" placeholder="e.g. OpenRouter, Groq, Together..." style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background-color: var(--bg-input); color: var(--color-text-main);">
+                    </div>
+                    <div class="control-group" style="margin-bottom: 16px;">
+                        <label for="custom-provider-url" style="display: block; margin-bottom: 6px; font-weight: 500;">API Base URL</label>
+                        <input type="text" id="custom-provider-url" placeholder="e.g. https://openrouter.ai/api/v1" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background-color: var(--bg-input); color: var(--color-text-main);">
+                        <span class="help-text" style="font-size: 11px; color: var(--color-text-muted); margin-top: 4px; display: block;">Must be an OpenAI-compatible endpoint.</span>
+                    </div>
+                </div>
+                <div class="modal-footer" style="padding: 16px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px;">
+                    <button class="btn btn-secondary" id="btn-cancel-custom-provider">Cancel</button>
+                    <button class="btn btn-primary" id="btn-save-custom-provider">Save Provider</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- HELP & MANUAL MODAL -->
+        <div class="modal" id="help-modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>LingoPDF Guide & Manual</h2>
+                    <button class="close-modal-btn" id="btn-close-modal"><i data-lucide="x"></i></button>
+                </div>
+                <div class="modal-body">
+                    <nav class="modal-tabs">
+                        <button class="modal-tab-btn active" data-modaltab="m-ocr">1. Text Detection / OCR</button>
+                        <button class="modal-tab-btn" data-modaltab="m-llm">2. LLM Translation</button>
+                        <button class="modal-tab-btn" data-modaltab="m-proxies">3. Proxy Setup</button>
+                    </nav>
+
+                    <div class="modal-tab-content active" id="m-ocr">
+                        <h3>Document Layout Parsing Options</h3>
+                        <p>LingoPDF uses advanced layout detection to separate paragraphs, equations, headers, and tables, ensuring standard linear reading before translating. Choose your backend engine:</p>
+                        
+                        <div class="guide-card">
+                            <h4>Option A: Datalab API (Recommended for Cloud Setup)</h4>
+                            <ol>
+                                <li>Sign up at <a href="https://www.datalab.to" target="_blank">datalab.to</a>.</li>
+                                <li>Retrieve your **API Key** from your dashboard.</li>
+                                <li>Input it under <strong>Configuration > Datalab API Key</strong>.</li>
+                                <li>This utilizes cloud high-accuracy models without taxing your machine.</li>
+                            </ol>
+                        </div>
+
+                        <div class="guide-card">
+                            <h4>Option B: Marker Local Installation (Requires Local GPU/CPU)</h4>
+                            <p>If you prefer running layouts offline without external API keys:</p>
+                            <ol>
+                                <li>Install Marker in your terminal:
+                                    <pre><code>pip install marker-pdf</code></pre>
+                                </li>
+                                <li>Ensure the command <code>marker_single</code> is available in your system path.</li>
+                                <li>The local model will download weights automatically on first execution and process files locally.</li>
+                            </ol>
+                        </div>
+
+                        <div class="guide-card">
+                            <h4>Option C: PyMuPDF Fallback (Instant, Zero Setup)</h4>
+                            <p>If neither Datalab nor local Marker is set up, PyMuPDF runs locally to parse text positioning and rebuild layouts instantly. Works out of the box!</p>
+                        </div>
+                    </div>
+
+                    <div class="modal-tab-content" id="m-llm">
+                        <h3>Configuring Translation LLMs</h3>
+                        <p>All translations and chats are powered by Large Language Models. Set up your preferred host:</p>
+                        <ul>
+                            <li><strong>Ollama (Local)</strong>: Install <a href="https://ollama.com" target="_blank">Ollama</a>, run it, and pull a translation model (e.g. <code>ollama pull llama3</code>). Our configuration will automatically detect running models.</li>
+                            <li><strong>OpenAI</strong>: Set your OpenAI API key and choose <code>gpt-4o-mini</code> or <code>gpt-4o</code>.</li>
+                            <li><strong>Google Gemini</strong>: Set your API key and choose <code>gemini-1.5-flash</code> or <code>gemini-1.5-pro</code>.</li>
+                            <li><strong>Claude (Anthropic)</strong>: Use your Claude credentials for translation requests.</li>
+                            <li><strong>DeepSeek API</strong>: Connect via the high-efficiency DeepSeek endpoints.</li>
+                        </ul>
+                        <p>Use <strong>Custom Translation Instructions</strong> to fine-tune translations (e.g., preserving special industry jargon or equations).</p>
+                    </div>
+
+                    <div class="modal-tab-content" id="m-proxies">
+                        <h3>SOCKS5 & HTTP Proxy Configurations</h3>
+                        <p>To route cloud API requests through network proxies (important for restricted environments):</p>
+                        <ol>
+                            <li>Enable proxy routing in <strong>Configuration</strong>.</li>
+                            <li>Provide a proxy URL. By default, the application connects to a SOCKS5 proxy running on <code>127.0.0.1:1080</code>.</li>
+                            <li>Supported formats:
+                                <ul>
+                                    <li>SOCKS5: <code>socks5://127.0.0.1:1080</code> (or <code>127.0.0.1:1080</code> which defaults to SOCKS5)</li>
+                                    <li>SOCKS5 with Auth: <code>socks5://username:password@127.0.0.1:1080</code></li>
+                                    <li>HTTP/HTTPS: <code>http://127.0.0.1:8080</code></li>
+                                </ul>
+                            </li>
+                            <li>Local hosts (like your Ollama instance at <code>http://127.0.0.1:11434</code>) are automatically detected and bypass proxy routing.</li>
+                        </ol>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" onclick="document.getElementById('help-modal').style.display='none'">Got it</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

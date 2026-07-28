@@ -1,0 +1,27 @@
+{
+  "backend/main.py": {
+    "mtime": 1785231680.1957827,
+    "ast_hash": "20887f2c939feadd8e2aa4e6f287fff5",
+    "semantic_hash": "20887f2c939feadd8e2aa4e6f287fff5"
+  },
+  "backend/services/llm_service.py": {
+    "mtime": 1785231674.5461378,
+    "ast_hash": "fac2cbb53d216a56ef37ee473803e401",
+    "semantic_hash": "fac2cbb53d216a56ef37ee473803e401"
+  },
+  "backend/services/pdf_service.py": {
+    "mtime": 1785231667.740271,
+    "ast_hash": "02abe5d10ccd07bb012879452b55011c",
+    "semantic_hash": "02abe5d10ccd07bb012879452b55011c"
+  },
+  "frontend/app.js": {
+    "mtime": 1785231721.2593608,
+    "ast_hash": "1bd25dccce5f7b2b0d84a2bb2e10903a",
+    "semantic_hash": "1bd25dccce5f7b2b0d84a2bb2e10903a"
+  },
+  "run.py": {
+    "mtime": 1785231730.1545453,
+    "ast_hash": "e3522f9422f5616221a8aab149de9ffb",
+    "semantic_hash": "e3522f9422f5616221a8aab149de9ffb"
+  }
+}
