@@ -183,7 +183,7 @@ function loadConfig() {
     elements.customInstructions.value = state.config.customPrompt;
     
     // Load chunking & rate limit configuration defaults
-    elements.translationChunkSize.value = state.config.chunkSize || 2500;
+    elements.translationChunkSize.value = state.config.chunkSize || 100000;
     elements.translationDelay.value = state.config.requestDelay || 1.0;
     
     elements.enableProxy.checked = state.config.proxyEnabled;
@@ -203,7 +203,7 @@ function saveConfig() {
     state.config.llmKey = elements.llmApiKey.value;
     state.config.customPrompt = elements.customInstructions.value;
     
-    state.config.chunkSize = parseInt(elements.translationChunkSize.value) || 2500;
+    state.config.chunkSize = parseInt(elements.translationChunkSize.value) || 100000;
     state.config.requestDelay = parseFloat(elements.translationDelay.value) || 1.0;
     
     state.config.proxyEnabled = elements.enableProxy.checked;
@@ -975,7 +975,7 @@ async function translateDocument() {
     elements.txtTranslated.value = "Preparing chunks for translation...";
     
     // Read user configuration
-    const maxChunkSize = parseInt(elements.translationChunkSize.value) || 2500;
+    const maxChunkSize = parseInt(elements.translationChunkSize.value) || 100000;
     const delaySec = parseFloat(elements.translationDelay.value) || 1.0;
     
     // Split into chunks
@@ -1381,7 +1381,7 @@ async function checkInstallerStatus() {
 }
 
 // Split markdown text into paragraph-preserving chunks of maximum character size
-function splitTextIntoChunks(text, maxChunkSize = 2500) {
+function splitTextIntoChunks(text, maxChunkSize = 100000) {
     const paragraphs = text.split("\n\n");
     const chunks = [];
     let currentChunk = "";

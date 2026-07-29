@@ -13,7 +13,7 @@
     <!-- PDF.js Styles & Script -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <link rel="stylesheet" href="index.css?v=170">
+    <link rel="stylesheet" href="index.css?v=172">
 </head>
 <body class="dark-theme">
     <div class="app-container">
@@ -193,16 +193,16 @@
                     <div class="tab-content" id="tab-chat">
                         <div class="chat-container">
                             <!-- Chat Sessions & Clear Controls -->
-                            <div class="chat-header-controls" style="display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color);">
+                            <div class="chat-header-controls">
                                 <div style="display: flex; align-items: center; gap: 6px; flex: 1;">
-                                    <span style="font-size: 11px; font-weight: 500; color: var(--color-text-muted);">Saved Chats:</span>
+                                    <span class="chat-header-title">Saved Chats:</span>
                                     <div class="select-wrapper" style="flex: 1; max-width: 220px;">
-                                        <select id="chat-sessions-select" style="padding: 4px 8px; font-size: 11px; height: 26px; border-radius: var(--radius-sm);">
+                                        <select id="chat-sessions-select">
                                             <option value="new">New Conversation</option>
                                         </select>
                                     </div>
                                 </div>
-                                <button id="btn-clear-chat" class="btn btn-secondary btn-icon-small" title="Save & Clear Conversation" style="font-size: 11px; padding: 4px 8px; height: 26px; display: flex; align-items: center; gap: 4px; border: 1px dashed var(--color-danger); color: var(--color-danger);">
+                                <button id="btn-clear-chat" title="Save & Clear Conversation">
                                     <i data-lucide="trash-2"></i> Clear Chat
                                 </button>
                             </div>
@@ -330,7 +330,7 @@
                             <div style="display: flex; gap: 12px; margin-top: 12px;">
                                 <div class="control-group" style="flex: 1; margin-bottom: 0;">
                                     <label for="translation-chunk-size">Translation Chunk Size (Chars)</label>
-                                    <input type="number" id="translation-chunk-size" value="2500" min="500" max="25000" step="500" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background-color: var(--bg-input); color: var(--color-text-main);">
+                                    <input type="number" id="translation-chunk-size" value="100000" min="500" max="1000000" step="500" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background-color: var(--bg-input); color: var(--color-text-main);">
                                 </div>
                                 <div class="control-group" style="flex: 1; margin-bottom: 0;">
                                     <label for="translation-delay">Request Delay (Seconds)</label>
@@ -439,31 +439,63 @@
                     <div class="modal-tab-content" id="m-llm">
                         <h3>Configuring Translation LLMs</h3>
                         <p>All translations and chats are powered by Large Language Models. Set up your preferred host:</p>
-                        <ul>
-                            <li><strong>Ollama (Local)</strong>: Install <a href="https://ollama.com" target="_blank">Ollama</a>, run it, and pull a translation model (e.g. <code>ollama pull llama3</code>). Our configuration will automatically detect running models.</li>
-                            <li><strong>OpenAI</strong>: Set your OpenAI API key and choose <code>gpt-4o-mini</code> or <code>gpt-4o</code>.</li>
-                            <li><strong>Google Gemini</strong>: Set your API key and choose <code>gemini-1.5-flash</code> or <code>gemini-1.5-pro</code>.</li>
-                            <li><strong>Claude (Anthropic)</strong>: Use your Claude credentials for translation requests.</li>
-                            <li><strong>DeepSeek API</strong>: Connect via the high-efficiency DeepSeek endpoints.</li>
-                        </ul>
-                        <p>Use <strong>Custom Translation Instructions</strong> to fine-tune translations (e.g., preserving special industry jargon or equations).</p>
+                        
+                        <div class="guide-card">
+                            <h4>Option A: Ollama (Local & Free)</h4>
+                            <p>For running completely offline local translations:</p>
+                            <ol>
+                                <li>Download and install <a href="https://ollama.com" target="_blank">Ollama</a> on your machine.</li>
+                                <li>Pull your desired model from your terminal:
+                                    <pre><code>ollama pull llama3</code></pre>
+                                </li>
+                                <li>LingoPDF automatically queries and loads all your installed Ollama models in the selection dropdown.</li>
+                            </ol>
+                        </div>
+
+                        <div class="guide-card">
+                            <h4>Option B: Standard Cloud APIs (OpenAI, Gemini, Claude, DeepSeek)</h4>
+                            <p>For high-accuracy cloud translation, connect using standard developer keys:</p>
+                            <ol>
+                                <li>Select your provider (e.g. Google Gemini, OpenAI, Anthropic, or DeepSeek).</li>
+                                <li>Input your active API Key under configuration.</li>
+                                <li>Click <strong>Test Connection</strong> to verify, then click the **Refresh** icon to load all available models online.</li>
+                            </ol>
+                        </div>
+
+                        <div class="guide-card">
+                            <h4>Option C: Custom LLM Providers (vLLM, Groq, OpenRouter, LM Studio)</h4>
+                            <p>To connect to local clusters, inference backends, or alternative servers:</p>
+                            <ol>
+                                <li>Click the <strong>Plus (+)</strong> button in the settings panel.</li>
+                                <li>Provide a provider name and base URL (e.g., OpenRouter or Groq).</li>
+                                <li>Select the custom provider, insert its credentials, and fetch its active models.</li>
+                            </ol>
+                        </div>
                     </div>
 
                     <div class="modal-tab-content" id="m-proxies">
                         <h3>SOCKS5 & HTTP Proxy Configurations</h3>
-                        <p>To route cloud API requests through network proxies (important for restricted environments):</p>
-                        <ol>
-                            <li>Enable proxy routing in <strong>Configuration</strong>.</li>
-                            <li>Provide a proxy URL. By default, the application connects to a SOCKS5 proxy running on <code>127.0.0.1:1080</code>.</li>
-                            <li>Supported formats:
-                                <ul>
-                                    <li>SOCKS5: <code>socks5://127.0.0.1:1080</code> (or <code>127.0.0.1:1080</code> which defaults to SOCKS5)</li>
-                                    <li>SOCKS5 with Auth: <code>socks5://username:password@127.0.0.1:1080</code></li>
-                                    <li>HTTP/HTTPS: <code>http://127.0.0.1:8080</code></li>
-                                </ul>
-                            </li>
-                            <li>Local hosts (like your Ollama instance at <code>http://127.0.0.1:11434</code>) are automatically detected and bypass proxy routing.</li>
-                        </ol>
+                        <p>To route cloud API calls and HuggingFace local weights downloads through proxy networks:</p>
+                        
+                        <div class="guide-card">
+                            <h4>1. Enable Proxy Routing</h4>
+                            <p>Toggle the <strong>Enable Proxy</strong> option in the settings. This ensures all HTTP/HTTPS and SOCKS requests are safely tunneled.</p>
+                        </div>
+
+                        <div class="guide-card">
+                            <h4>2. Supported Formats</h4>
+                            <p>By default, LingoPDF connects to a SOCKS5 proxy running on <code>127.0.0.1:1080</code>. Provide URLs in the following structures:</p>
+                            <ul>
+                                <li><strong>SOCKS5</strong>: <code>socks5://127.0.0.1:1080</code> (or <code>127.0.0.1:1080</code> which defaults to SOCKS5)</li>
+                                <li><strong>SOCKS5 with Auth</strong>: <code>socks5://username:password@127.0.0.1:1080</code></li>
+                                <li><strong>HTTP/HTTPS</strong>: <code>http://127.0.0.1:8080</code></li>
+                            </ul>
+                        </div>
+
+                        <div class="guide-card">
+                            <h4>3. Local Bypass</h4>
+                            <p>Internal network endpoints (such as your local Ollama server running on <code>http://127.0.0.1:11434</code>) are automatically detected and bypass proxy configurations to prevent network conflicts.</p>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -473,6 +505,6 @@
         </div>
     </div>
     
-    <script src="app.js?v=170"></script>
+    <script src="app.js?v=171"></script>
 </body>
 </html>

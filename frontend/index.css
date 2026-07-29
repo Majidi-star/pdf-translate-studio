@@ -1110,3 +1110,64 @@ input:checked + .slider:before {
 .installer-controls button {
     flex: 1;
 }
+
+/* Chat Header Controls */
+.chat-header-controls {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-header-title {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-text-muted);
+}
+
+#chat-sessions-select {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--color-text-main);
+    padding: 4px 8px;
+    font-size: 11px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+#chat-sessions-select:focus {
+    border-color: var(--color-primary);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+select option {
+    background-color: #18181b; /* Zinc 900 background */
+    color: #f4f4f5; /* Zinc 100 text */
+}
+
+#btn-clear-chat {
+    font-size: 11px;
+    padding: 4px 10px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--color-text-muted);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+#btn-clear-chat:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #ef4444;
+}
+
