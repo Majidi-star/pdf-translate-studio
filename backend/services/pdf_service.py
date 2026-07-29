@@ -133,8 +133,34 @@ def convert_pdf_local(file_bytes: bytes, filename: str) -> Dict[str, Any]:
             with open(markdown_file, "r", encoding="utf-8") as f:
                 md_content = f.read()
                 
+            # Split markdown into pages for frontend overlay
+            import re
+            parts = []
+            if "\n\n---\n\n" in md_content:
+                parts = md_content.split("\n\n---\n\n")
+            elif "\n---\n" in md_content:
+                parts = md_content.split("\n---\n")
+            else:
+                parts = re.split(r'## Page \d+\n+', md_content)
+                if len(parts) > 1 and not parts[0].strip():
+                    parts = parts[1:]
+            
+            pages = []
+            if parts:
+                for idx, part in enumerate(parts):
+                    pages.append({
+                        "page": idx + 1,
+                        "text": part.strip()
+                    })
+            else:
+                pages.append({
+                    "page": 1,
+                    "text": md_content
+                })
+
             return {
                 "markdown": md_content,
+                "pages": pages,
                 "source": "local_marker"
             }
         except subprocess.CalledProcessError as e:

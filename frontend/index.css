@@ -361,8 +361,86 @@ body {
 }
 
 .pdf-page-container .textLayer {
-    opacity: 0.25; /* Makes selection transparently sit on canvas */
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    opacity: 1 !important; /* Makes selections fully visible */
     mix-blend-mode: multiply;
+    pointer-events: auto !important; /* Force pointer events to allow selection */
+    z-index: 2 !important;
+}
+
+/* OCR transparent selectable text overlay styling */
+.ocr-text-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    white-space: pre-wrap;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 20px;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    pointer-events: auto !important; /* Force pointer events to allow selection */
+    z-index: 10;
+    cursor: text;
+}
+
+.ocr-text-overlay-line {
+    color: transparent !important;
+    background: transparent !important;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    pointer-events: auto !important; /* Force pointer events */
+}
+
+.ocr-text-overlay::selection,
+.ocr-text-overlay-line::selection {
+    background: rgba(99, 102, 241, 0.3) !important; /* Theme Indigo Highlight */
+}
+
+/* Active Area Selection Box */
+.active-selection-box {
+    position: absolute;
+    border: 2px dashed var(--color-primary);
+    background: rgba(99, 102, 241, 0.08);
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.2), 0 0 10px rgba(99, 102, 241, 0.4);
+    border-radius: 4px;
+    pointer-events: none; /* Mouse moves go through it */
+    z-index: 100;
+    animation: selection-glow 1.5s infinite alternate ease-in-out;
+}
+
+@keyframes selection-glow {
+    from {
+        box-shadow: 0 0 6px rgba(99, 102, 241, 0.3);
+        border-color: var(--color-primary);
+    }
+    to {
+        box-shadow: 0 0 14px rgba(168, 85, 247, 0.5);
+        border-color: var(--color-accent);
+    }
+}
+
+/* Area Select Mode Crosshair & Non-selectability */
+.area-select-active .pdf-page-container,
+.area-select-active .pdf-page-container * {
+    cursor: crosshair !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* Select Mode Toggle Buttons */
+.btn-mode.active {
+    background-color: var(--color-primary) !important;
+    color: white !important;
+    box-shadow: var(--shadow-glow);
 }
 
 /* Dropzone */

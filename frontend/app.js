@@ -12,8 +12,11 @@ const state = {
     pdfFile: null,
     pdfFilename: "",
     extractedMarkdown: "",
+    extractedPages: [],
     translatedMarkdown: "",
     selectedText: "",
+    selectionMode: "text", // "text" or "area"
+    activeSelectionBox: null,
     chatHistory: [
         { role: "assistant", content: "Hello! I'm your document assistant. Upload a PDF, extract the text layout, or select any text block, and ask me questions about it!" }
     ],
@@ -61,6 +64,8 @@ const elements = {
     nextPage: document.getElementById("next-page"),
     pageNumDisplay: document.getElementById("page-num-display"),
     btnClosePdf: document.getElementById("btn-close-pdf"),
+    btnSelectText: document.getElementById("btn-select-text"),
+    btnSelectArea: document.getElementById("btn-select-area"),
     
     tabs: document.querySelectorAll(".tab-btn"),
     tabContents: document.querySelectorAll(".tab-content"),
@@ -618,6 +623,9 @@ function setupEventListeners() {
         state.pdfDoc = null;
         state.pdfFile = null;
         state.pdfFilename = "";
+        state.extractedMarkdown = "";
+        state.extractedPages = [];
+        clearActiveSelectionBox();
         elements.pdfRenderArea.style.display = "none";
         elements.pdfControls.style.display = "none";
         elements.dropzone.style.display = "flex";
@@ -629,6 +637,112 @@ function setupEventListeners() {
         hideSelectionTooltip();
     });
 
+    // Select Mode Toggle Logic
+    elements.btnSelectText.addEventListener("click", () => {
+        state.selectionMode = "text";
+        elements.btnSelectText.classList.add("active");
+        elements.btnSelectArea.classList.remove("active");
+        elements.pdfRenderArea.classList.remove("area-select-active");
+        clearActiveSelectionBox();
+    });
+    
+    elements.btnSelectArea.addEventListener("click", () => {
+        state.selectionMode = "area";
+        elements.btnSelectArea.classList.add("active");
+        elements.btnSelectText.classList.remove("active");
+        elements.pdfRenderArea.classList.add("area-select-active");
+        
+        // Clear standard browser text selection
+        window.getSelection().removeAllRanges();
+        hideSelectionTooltip();
+    });
+
+    // Area Selection Mode mouse listeners
+    let isDrawing = false;
+    let startX = 0;
+    let startY = 0;
+    let activeBox = null;
+    let activePageContainer = null;
+
+    elements.pdfRenderArea.addEventListener("mousedown", (e) => {
+        if (state.selectionMode !== "area") return;
+        
+        // Find which pdf-page-container the click occurred in
+        activePageContainer = e.target.closest(".pdf-page-container");
+        if (!activePageContainer) return;
+        
+        isDrawing = true;
+        clearActiveSelectionBox();
+        hideSelectionTooltip();
+        
+        // Coordinates relative to the page container
+        const rect = activePageContainer.getBoundingClientRect();
+        startX = e.clientX - rect.left;
+        startY = e.clientY - rect.top;
+        
+        activeBox = document.createElement("div");
+        activeBox.className = "active-selection-box";
+        activeBox.style.left = startX + "px";
+        activeBox.style.top = startY + "px";
+        activeBox.style.width = "0px";
+        activeBox.style.height = "0px";
+        
+        activePageContainer.appendChild(activeBox);
+        state.activeSelectionBox = activeBox;
+    });
+
+    elements.pdfRenderArea.addEventListener("mousemove", (e) => {
+        if (!isDrawing || !activeBox || !activePageContainer) return;
+        
+        const rect = activePageContainer.getBoundingClientRect();
+        const currentX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const currentY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        
+        const x = Math.min(startX, currentX);
+        const y = Math.min(startY, currentY);
+        const w = Math.abs(currentX - startX);
+        const h = Math.abs(currentY - startY);
+        
+        activeBox.style.left = x + "px";
+        activeBox.style.top = y + "px";
+        activeBox.style.width = w + "px";
+        activeBox.style.height = h + "px";
+    });
+
+    window.addEventListener("mouseup", (e) => {
+        if (!isDrawing) return;
+        isDrawing = false;
+        
+        if (!activeBox || !activePageContainer) return;
+        
+        const boxRect = activeBox.getBoundingClientRect();
+        
+        // If it is a tiny drag/click, dismiss selection
+        if (boxRect.width < 6 && boxRect.height < 6) {
+            clearActiveSelectionBox();
+            return;
+        }
+        
+        // Determine page number
+        const pageContainers = Array.from(elements.pdfRenderArea.querySelectorAll(".pdf-page-container"));
+        const pageIndex = pageContainers.indexOf(activePageContainer);
+        const pageNum = pageIndex + 1;
+        
+        // Extract text inside the selection box bounds
+        const text = getTextInRect(activePageContainer, boxRect);
+        if (text) {
+            state.selectedText = text;
+            
+            // Position floating selection tooltip above the selection box
+            elements.selectionTooltip.style.left = `${boxRect.left + window.scrollX + (boxRect.width/2) - 100}px`;
+            elements.selectionTooltip.style.top = `${Math.max(10, boxRect.top + window.scrollY - 45)}px`;
+            elements.selectionTooltip.style.display = "flex";
+        } else {
+            clearActiveSelectionBox();
+            hideSelectionTooltip();
+        }
+    });
+
     // PDF Pages Selection listeners
     elements.pdfRenderArea.addEventListener("mouseup", handleTextSelection);
     elements.pdfRenderArea.addEventListener("touchend", handleTextSelection);
@@ -637,13 +751,18 @@ function setupEventListeners() {
     elements.btnTooltipTranslate.addEventListener("click", translateSelectedText);
     elements.btnTooltipChat.addEventListener("click", sendSelectionToChat);
     
-    // Global mouse clicks to dismiss selection tooltip
+    // Global mouse clicks to dismiss selection tooltip immediately on mousedown
     document.addEventListener("mousedown", (e) => {
-        if (!elements.selectionTooltip.contains(e.target) && 
-            !elements.pdfRenderArea.contains(e.target)) {
+        if (!elements.selectionTooltip.contains(e.target)) {
             hideSelectionTooltip();
+            if (state.selectionMode !== "area" && !e.target.closest("#pdf-controls")) {
+                clearActiveSelectionBox();
+            }
         }
     });
+
+    // Dismiss selection tooltip when scrolling the PDF area
+    elements.pdfRenderArea.addEventListener("scroll", hideSelectionTooltip);
 
     // Copy actions
     elements.btnCopyOcr.addEventListener("click", () => {
@@ -698,6 +817,10 @@ function handlePdfFile(file) {
     
     state.pdfFile = file;
     state.pdfFilename = file.name;
+    state.extractedMarkdown = "";
+    state.extractedPages = [];
+    state.translatedMarkdown = "";
+    clearActiveSelectionBox();
     elements.dropzone.style.display = "none";
     elements.pdfRenderArea.innerHTML = "<div class='loading-spinner'>Loading PDF Pages...</div>";
     elements.pdfRenderArea.style.display = "flex";
@@ -767,6 +890,9 @@ async function renderPdfDoc() {
                 textDivs: []
             }).promise;
             
+            // Inject layout-extracted OCR text layer overlay if available
+            applyOcrOverlayForPage(pageNo, textLayerDiv);
+            
         } catch (err) {
             console.error(`Error rendering page ${pageNo}:`, err);
             const errorDiv = document.createElement("div");
@@ -786,6 +912,8 @@ async function renderPdfDoc() {
 
 // Text Selection Handlers
 function handleTextSelection(e) {
+    if (state.selectionMode === "area") return;
+    
     setTimeout(() => {
         const selection = window.getSelection();
         const selectedStr = selection.toString().trim();
@@ -799,7 +927,7 @@ function handleTextSelection(e) {
             
             // Position floating tooltip above selection
             elements.selectionTooltip.style.left = `${rect.left + window.scrollX + (rect.width/2) - 100}px`;
-            elements.selectionTooltip.style.top = `${rect.top + window.scrollY - 45}px`;
+            elements.selectionTooltip.style.top = `${Math.max(10, rect.top + window.scrollY - 45)}px`;
             elements.selectionTooltip.style.display = "flex";
         } else {
             hideSelectionTooltip();
@@ -809,6 +937,189 @@ function handleTextSelection(e) {
 
 function hideSelectionTooltip() {
     elements.selectionTooltip.style.display = "none";
+}
+
+// Helper to parse markdown string into page-by-page objects if pages array is not present in API response
+function parseMarkdownIntoPages(markdown) {
+    if (!markdown) return [];
+    const pages = [];
+    
+    // Try splitting by ## Page X (standard format for fallback)
+    const pageRegex = /## Page (\d+)\n+/gi;
+    let match;
+    const pagePositions = [];
+    
+    while ((match = pageRegex.exec(markdown)) !== null) {
+        pagePositions.push({
+            page: parseInt(match[1], 10),
+            index: match.index,
+            headerLength: match[0].length
+        });
+    }
+    
+    if (pagePositions.length > 0) {
+        for (let i = 0; i < pagePositions.length; i++) {
+            const start = pagePositions[i].index + pagePositions[i].headerLength;
+            const end = (i + 1 < pagePositions.length) ? pagePositions[i + 1].index : markdown.length;
+            pages.push({
+                page: pagePositions[i].page,
+                text: markdown.slice(start, end).trim()
+            });
+        }
+    } else {
+        // If no ## Page matches, check for standard Marker/Markdown page breaks (---)
+        let parts = [];
+        if (markdown.includes("\n\n---\n\n")) {
+            parts = markdown.split("\n\n---\n\n");
+        } else if (markdown.includes("\n---\n")) {
+            parts = markdown.split("\n---\n");
+        }
+        
+        if (parts.length > 0) {
+            parts.forEach((text, index) => {
+                pages.push({
+                    page: index + 1,
+                    text: text.trim()
+                });
+            });
+        } else {
+            // Fallback to putting all text on page 1
+            pages.push({
+                page: 1,
+                text: markdown.trim()
+            });
+        }
+    }
+    return pages;
+}
+
+// OCR Text Overlay Handlers (Transparent selection overlay for scanned pages / pictures)
+function applyOcrOverlayForPage(pageNum, textLayerDiv) {
+    // If pages is empty, try to parse from the markdown
+    if ((!state.extractedPages || state.extractedPages.length === 0) && state.extractedMarkdown) {
+        state.extractedPages = parseMarkdownIntoPages(state.extractedMarkdown);
+    }
+    
+    if (!state.extractedPages || state.extractedPages.length === 0) return;
+    
+    // Check if page already has significant native selectable text.
+    // If it does, we skip adding the OCR overlay to avoid double selection/conflicts.
+    const nativeSpans = textLayerDiv.querySelectorAll("span:not(.ocr-text-overlay-line)");
+    let nativeTextLength = 0;
+    nativeSpans.forEach(span => {
+        nativeTextLength += span.textContent.trim().length;
+    });
+    
+    if (nativeTextLength > 50) {
+        console.log(`Page ${pageNum} already has native text (${nativeTextLength} chars). Skipping OCR overlay.`);
+        return;
+    }
+
+    const pageData = state.extractedPages.find(p => p.page === pageNum);
+    if (!pageData || !pageData.text) return;
+    
+    let ocrOverlay = textLayerDiv.querySelector(".ocr-text-overlay");
+    if (!ocrOverlay) {
+        ocrOverlay = document.createElement("div");
+        ocrOverlay.className = "ocr-text-overlay";
+        textLayerDiv.appendChild(ocrOverlay);
+    }
+    
+    // Split text by lines and clean them up
+    const lines = pageData.text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    ocrOverlay.innerHTML = "";
+    
+    // Distribute lines vertically across the page to match coordinate coordinates for selection box
+    const L = lines.length;
+    lines.forEach((line, i) => {
+        const lineSpan = document.createElement("span");
+        lineSpan.className = "ocr-text-overlay-line";
+        lineSpan.textContent = line;
+        
+        // Distribute lines proportionally
+        lineSpan.style.position = "absolute";
+        lineSpan.style.left = "5%";
+        lineSpan.style.width = "90%";
+        lineSpan.style.top = ((i / L) * 100) + "%";
+        lineSpan.style.height = (100 / L) + "%";
+        lineSpan.style.display = "flex";
+        lineSpan.style.alignItems = "center";
+        
+        ocrOverlay.appendChild(lineSpan);
+    });
+}
+
+function applyOcrTextOverlays() {
+    if (!state.extractedPages || state.extractedPages.length === 0) return;
+    
+    const containers = elements.pdfRenderArea.querySelectorAll(".pdf-page-container");
+    containers.forEach((container, index) => {
+        const pageNum = index + 1;
+        const textLayer = container.querySelector(".textLayer");
+        if (textLayer) {
+            applyOcrOverlayForPage(pageNum, textLayer);
+        }
+    });
+}
+
+// Clear currently drawn selection box
+function clearActiveSelectionBox() {
+    if (state.activeSelectionBox) {
+        try {
+            state.activeSelectionBox.remove();
+        } catch(e) {}
+        state.activeSelectionBox = null;
+    }
+}
+
+// Extract text within coordinates
+function getTextInRect(pageContainer, selectRect) {
+    const textLayer = pageContainer.querySelector(".textLayer");
+    if (!textLayer) return "";
+    
+    const spans = textLayer.querySelectorAll("span");
+    let selectedSpans = [];
+    
+    spans.forEach(span => {
+        const rect = span.getBoundingClientRect();
+        // Check if bounding box intersects with selectRect
+        const intersects = !(rect.right < selectRect.left || 
+                             rect.left > selectRect.right || 
+                             rect.bottom < selectRect.top || 
+                             rect.top > selectRect.bottom);
+        
+        if (intersects && span.textContent.trim().length > 0) {
+            selectedSpans.push({
+                text: span.textContent,
+                rect: rect
+            });
+        }
+    });
+    
+    // Sort selected spans primarily by top offset (with 6px line tolerance), secondary by left offset
+    selectedSpans.sort((a, b) => {
+        const dy = a.rect.top - b.rect.top;
+        if (Math.abs(dy) < 6) {
+            return a.rect.left - b.rect.left;
+        }
+        return dy;
+    });
+    
+    let text = "";
+    let lastTop = 0;
+    selectedSpans.forEach((item, index) => {
+        if (index > 0) {
+            if (Math.abs(item.rect.top - lastTop) >= 6) {
+                text += "\n";
+            } else {
+                text += " ";
+            }
+        }
+        text += item.text;
+        lastTop = item.rect.top;
+    });
+    
+    return text.trim();
 }
 
 // Translate Selected Text from selection tooltip
@@ -938,7 +1249,27 @@ async function runLayoutExtraction() {
         elements.progressStatusText.innerText = "Extraction Complete!";
         
         state.extractedMarkdown = data.markdown;
-        elements.txtDetected.value = state.extractedMarkdown;
+        state.extractedPages = data.pages || [];
+        
+        if ((!state.extractedPages || state.extractedPages.length === 0) && state.extractedMarkdown) {
+            state.extractedPages = parseMarkdownIntoPages(state.extractedMarkdown);
+        }
+        
+        // Check if the extracted text is empty or very short (meaning no text was found/extracted, e.g. scanned document with fallback method)
+        const cleanText = (state.extractedMarkdown || "").replace(/#+ Page \d+/gi, "").trim();
+        if (cleanText.length === 0) {
+            elements.txtDetected.value = "No text was detected in the document.\n\n" +
+                "If this is a scanned PDF, photocopy, or contains text inside images/pictures:\n" +
+                "1. Go to the 'Configuration' tab.\n" +
+                "2. Under 'PDF Extraction Method', select either 'Datalab API (Cloud)' or 'Marker (Local)'.\n" +
+                "3. Re-run the extraction to run layout OCR algorithms.";
+            alert("No text detected. If this is a scanned PDF, please configure an OCR-capable method (Datalab or Marker) under the Configuration tab.");
+        } else {
+            elements.txtDetected.value = state.extractedMarkdown;
+        }
+        
+        // Apply OCR text overlays to the rendered PDF pages
+        applyOcrTextOverlays();
         
         // Enable translate button
         elements.btnTranslateDoc.disabled = false;
