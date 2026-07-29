@@ -586,6 +586,20 @@ function setupEventListeners() {
         }
     });
 
+    // Page Navigation
+    elements.prevPage.addEventListener("click", () => {
+        if (state.currentPage > 1) {
+            state.currentPage--;
+            scrollToPage(state.currentPage);
+        }
+    });
+    elements.nextPage.addEventListener("click", () => {
+        if (state.pdfDoc && state.currentPage < state.pdfDoc.numPages) {
+            state.currentPage++;
+            scrollToPage(state.currentPage);
+        }
+    });
+
     // Close PDF File
     elements.btnClosePdf.addEventListener("click", () => {
         state.pdfDoc = null;
@@ -676,7 +690,7 @@ function handlePdfFile(file) {
         pdfjsLib.getDocument(typedarray).promise.then(pdf => {
             state.pdfDoc = pdf;
             state.currentPage = 1;
-            elements.pageNumDisplay.innerText = `Pages: ${pdf.numPages}`;
+            elements.pageNumDisplay.innerText = `Page 1 / ${pdf.numPages}`;
             renderPdfDoc();
         }).catch(err => {
             alert("Error loading PDF: " + err.message);
@@ -1367,6 +1381,16 @@ function splitTextIntoChunks(text, maxChunkSize = 2500) {
     }
     
     return chunks;
+}
+
+// Scroll PDF render area to specific page block and update toolbar display
+function scrollToPage(pageNo) {
+    if (!state.pdfDoc) return;
+    const containers = elements.pdfRenderArea.querySelectorAll(".pdf-page-container");
+    if (containers && containers[pageNo - 1]) {
+        containers[pageNo - 1].scrollIntoView({ behavior: "smooth", block: "start" });
+        elements.pageNumDisplay.innerText = `Page ${pageNo} / ${state.pdfDoc.numPages}`;
+    }
 }
 
 function repopulateProviderDropdown() {
