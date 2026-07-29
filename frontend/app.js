@@ -354,6 +354,7 @@ async function updateModelsDropdown() {
                 elements.llmModelCustom.value = state.config.llmModel;
                 elements.llmModelCustom.style.display = "block";
             }
+            saveConfig();
         } else {
             throw new Error("Empty list");
         }
@@ -380,6 +381,7 @@ async function updateModelsDropdown() {
             elements.llmModelCustom.value = state.config.llmModel;
             elements.llmModelCustom.style.display = "block";
         }
+        saveConfig();
     }
 }
 
@@ -1063,6 +1065,16 @@ async function sendChatMessage() {
     const userText = elements.chatInput.value.trim();
     if (!userText) return;
     
+    // Automatically retrieve document text context if layout OCR hasn't been run but a PDF is loaded!
+    let docContext = state.extractedMarkdown;
+    if (!docContext && state.pdfDoc) {
+        try {
+            docContext = await extractPdfTextClientSide();
+        } catch (e) {
+            console.error("Client-side dynamic text extraction failed", e);
+        }
+    }
+
     elements.chatInput.value = "";
     
     // If context is attached, append it as a reference
@@ -1090,13 +1102,21 @@ async function sendChatMessage() {
     elements.chatBox.scrollTop = elements.chatBox.scrollHeight;
     
     // Prepare API call history (max 8 messages back to conserve context space)
-    const messagesPayload = state.chatHistory.map((msg, index) => {
+    let messagesPayload = state.chatHistory.map((msg, index) => {
         // Feed the prompt context in the last user message
         if (index === state.chatHistory.length - 1 && msg.role === "user") {
             return { role: "user", content: promptWithContext };
         }
         return msg;
     }).slice(-8);
+    
+    // Inject document context if available
+    if (docContext) {
+        messagesPayload.unshift({
+            role: "system",
+            content: `You are an intelligent PDF document assistant. Use the following text content of the active PDF document to answer the user's questions about it:\n\n${docContext}`
+        });
+    }
     
     const payload = {
         messages: messagesPayload,
@@ -1525,6 +1545,24 @@ function scrollToPage(pageNo) {
         containers[pageNo - 1].scrollIntoView({ behavior: "smooth", block: "start" });
         elements.pageNumDisplay.innerText = `Page ${pageNo} / ${state.pdfDoc.numPages}`;
     }
+}
+
+// Client-side text extractor fallback for zero-setup document chat
+async function extractPdfTextClientSide() {
+    if (!state.pdfDoc) return "";
+    let fullText = "";
+    const numPages = Math.min(state.pdfDoc.numPages, 10);
+    for (let i = 1; i <= numPages; i++) {
+        try {
+            const page = await state.pdfDoc.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items.map(item => item.str).join(" ");
+            fullText += `--- Page ${i} ---\n${pageText}\n\n`;
+        } catch (e) {
+            console.error(`Error reading page ${i} text:`, e);
+        }
+    }
+    return fullText.trim();
 }
 
 function repopulateProviderDropdown() {
