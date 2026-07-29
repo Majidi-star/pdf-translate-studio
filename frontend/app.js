@@ -137,7 +137,11 @@ const elements = {
     transProgressPct: document.getElementById("trans-progress-pct"),
     btnCancelTranslation: document.getElementById("btn-cancel-translation"),
     translationChunkSize: document.getElementById("translation-chunk-size"),
-    translationDelay: document.getElementById("translation-delay")
+    translationDelay: document.getElementById("translation-delay"),
+
+    // Saved Chat Elements
+    chatSessionsSelect: document.getElementById("chat-sessions-select"),
+    btnClearChat: document.getElementById("btn-clear-chat")
 };
 
 // Load saved configuration from LocalStorage
@@ -147,6 +151,13 @@ function loadConfig() {
     
     // Re-populate provider dropdown options
     repopulateProviderDropdown();
+    
+    // Read saved chat sessions
+    state.chatSessions = JSON.parse(localStorage.getItem("lingo_pdf_chat_sessions") || "[]");
+    state.currentSessionId = "new";
+    setTimeout(() => {
+        repopulateChatSessionsDropdown();
+    }, 100);
     
     const saved = localStorage.getItem("lingo_pdf_config");
     if (saved) {
@@ -658,6 +669,12 @@ function setupEventListeners() {
         state.attachedContext = "";
         elements.chatContextBanner.style.display = "none";
     });
+    
+    // Clear Chat and switch session listeners
+    elements.btnClearChat.addEventListener("click", clearChat);
+    elements.chatSessionsSelect.addEventListener("change", (e) => {
+        loadChatSession(e.target.value);
+    });
 }
 
 // Clipboard Helper
@@ -737,6 +754,7 @@ async function renderPdfDoc() {
             textLayerDiv.className = "textLayer";
             textLayerDiv.style.width = viewport.width + "px";
             textLayerDiv.style.height = viewport.height + "px";
+            textLayerDiv.style.setProperty("--scale-factor", viewport.scale); // Fix PDF.js text layer warning
             pageContainer.appendChild(textLayerDiv);
             
             const textContent = await page.getTextContent();
@@ -1106,11 +1124,13 @@ async function sendChatMessage() {
         const data = await response.json();
         state.chatHistory.push({ role: "assistant", content: data.response });
         renderChatMessages();
+        saveActiveChatSession();
         
     } catch (err) {
         elements.chatBox.removeChild(typingMsg);
         state.chatHistory.push({ role: "assistant", content: `Error: ${err.message}` });
         renderChatMessages();
+        saveActiveChatSession();
     }
 }
 
@@ -1381,6 +1401,120 @@ function splitTextIntoChunks(text, maxChunkSize = 2500) {
     }
     
     return chunks;
+}
+
+// Saved Chat Session Helpers
+function saveActiveChatSession() {
+    if (state.chatHistory.length <= 1) return; // Don't save empty chats containing only the welcome message
+    
+    // Find the first user message for a title
+    const firstUserMsg = state.chatHistory.find(m => m.role === "user");
+    let title = firstUserMsg ? firstUserMsg.content : "";
+    if (title.length > 25) {
+        title = title.substring(0, 22) + "...";
+    }
+    if (!title) {
+        title = "Chat Session " + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    if (state.currentSessionId === "new") {
+        // Create new session
+        const newSession = {
+            id: "session-" + Date.now(),
+            title: title,
+            messages: [...state.chatHistory]
+        };
+        state.currentSessionId = newSession.id;
+        state.chatSessions.unshift(newSession);
+    } else {
+        // Update existing session
+        const session = state.chatSessions.find(s => s.id === state.currentSessionId);
+        if (session) {
+            session.messages = [...state.chatHistory];
+            session.title = title; // Update title in case it changed
+        } else {
+            // Backup fallback if session disappeared
+            const newSession = {
+                id: state.currentSessionId,
+                title: title,
+                messages: [...state.chatHistory]
+            };
+            state.chatSessions.unshift(newSession);
+        }
+    }
+    
+    // Keep only last 3 sessions
+    if (state.chatSessions.length > 3) {
+        state.chatSessions.pop();
+    }
+    
+    localStorage.setItem("lingo_pdf_chat_sessions", JSON.stringify(state.chatSessions));
+    repopulateChatSessionsDropdown();
+}
+
+function clearChat() {
+    // If current conversation has user messages, save it first!
+    if (state.chatHistory.length > 1) {
+        saveActiveChatSession();
+    }
+    
+    // Clear and start new
+    state.chatHistory = [
+        { role: "assistant", content: "Hello! I'm your document assistant. Upload a PDF, extract the text layout, or select any text block, and ask me questions about it!" }
+    ];
+    state.currentSessionId = "new";
+    
+    localStorage.setItem("lingo_pdf_chat_sessions", JSON.stringify(state.chatSessions));
+    repopulateChatSessionsDropdown();
+    renderChatMessages();
+}
+
+function loadChatSession(sessionId) {
+    if (sessionId === "new") {
+        // Save current chat first if it was active
+        if (state.chatHistory.length > 1) {
+            saveActiveChatSession();
+        }
+        state.chatHistory = [
+            { role: "assistant", content: "Hello! I'm your document assistant. Upload a PDF, extract the text layout, or select any text block, and ask me questions about it!" }
+        ];
+        state.currentSessionId = "new";
+    } else {
+        // Save current chat first
+        if (state.chatHistory.length > 1) {
+            saveActiveChatSession();
+        }
+        const session = state.chatSessions.find(s => s.id === sessionId);
+        if (session) {
+            state.chatHistory = [...session.messages];
+            state.currentSessionId = session.id;
+        }
+    }
+    renderChatMessages();
+}
+
+function repopulateChatSessionsDropdown() {
+    if (!elements.chatSessionsSelect) return;
+    
+    const currentVal = state.currentSessionId;
+    elements.chatSessionsSelect.innerHTML = "";
+    
+    // Default option
+    const newOpt = document.createElement("option");
+    newOpt.value = "new";
+    newOpt.text = "New Conversation";
+    elements.chatSessionsSelect.add(newOpt);
+    
+    // Add saved sessions
+    state.chatSessions.forEach(session => {
+        const opt = document.createElement("option");
+        opt.value = session.id;
+        opt.text = session.title;
+        elements.chatSessionsSelect.add(opt);
+    });
+    
+    // Reselect active
+    elements.chatSessionsSelect.value = currentVal;
 }
 
 // Scroll PDF render area to specific page block and update toolbar display

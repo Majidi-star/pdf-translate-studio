@@ -222,7 +222,7 @@ async def download_process(proxy_url: Optional[str]):
                     last_check_time = start_time
                     
                     with open(partial_path, mode) as out_file:
-                        async for chunk in response.iter_bytes(chunk_size=chunk_size):
+                        async for chunk in response.aiter_bytes(chunk_size=chunk_size):
                             if PAUSE_FLAG:
                                 print(f"[Installer] Pausing on file: {task['filename']}")
                                 return

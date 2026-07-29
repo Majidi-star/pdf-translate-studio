@@ -248,6 +248,9 @@ async def execute_llm_call(
                 res_data = response.json()
                 return res_data.get("choices", [{}])[0].get("message", {}).get("content", "")
             except Exception as e:
+                import traceback
+                print(f"[LLM Service Error] OpenAI API call failed:")
+                traceback.print_exc()
                 raise Exception(f"OpenAI API failed: {str(e)}")
 
     # 3. Gemini

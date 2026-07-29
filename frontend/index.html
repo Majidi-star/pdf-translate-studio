@@ -110,6 +110,28 @@
                                     <option value="Persian">Persian (فارسی)</option>
                                     <option value="Arabic">Arabic (العربية)</option>
                                     <option value="Turkish">Turkish (Türkçe)</option>
+                                    <option value="Italian">Italian (Italiano)</option>
+                                    <option value="Portuguese">Portuguese (Português)</option>
+                                    <option value="Dutch">Dutch (Nederlands)</option>
+                                    <option value="Polish">Polish (Polski)</option>
+                                    <option value="Swedish">Swedish (Svenska)</option>
+                                    <option value="Korean">Korean (한국어)</option>
+                                    <option value="Hindi">Hindi (हिन्दी)</option>
+                                    <option value="Bengali">Bengali (বাংলা)</option>
+                                    <option value="Vietnamese">Vietnamese (Tiếng Việt)</option>
+                                    <option value="Indonesian">Indonesian (Bahasa Indonesia)</option>
+                                    <option value="Thai">Thai (ไทย)</option>
+                                    <option value="Greek">Greek (Ελληνικά)</option>
+                                    <option value="Hebrew">Hebrew (עברית)</option>
+                                    <option value="Ukrainian">Ukrainian (Українська)</option>
+                                    <option value="Romanian">Romanian (Română)</option>
+                                    <option value="Danish">Danish (Dansk)</option>
+                                    <option value="Finnish">Finnish (Suomi)</option>
+                                    <option value="Norwegian">Norwegian (Norsk)</option>
+                                    <option value="Czech">Czech (Čeština)</option>
+                                    <option value="Slovak">Slovak (Slovenčina)</option>
+                                    <option value="Hungarian">Hungarian (Magyar)</option>
+                                    <option value="Malay">Malay (Bahasa Melayu)</option>
                                 </select>
                             </div>
                         </div>
@@ -170,6 +192,21 @@
                     <!-- TAB 2: CHAT -->
                     <div class="tab-content" id="tab-chat">
                         <div class="chat-container">
+                            <!-- Chat Sessions & Clear Controls -->
+                            <div class="chat-header-controls" style="display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color);">
+                                <div style="display: flex; align-items: center; gap: 6px; flex: 1;">
+                                    <span style="font-size: 11px; font-weight: 500; color: var(--color-text-muted);">Saved Chats:</span>
+                                    <div class="select-wrapper" style="flex: 1; max-width: 220px;">
+                                        <select id="chat-sessions-select" style="padding: 4px 8px; font-size: 11px; height: 26px; border-radius: var(--radius-sm);">
+                                            <option value="new">New Conversation</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <button id="btn-clear-chat" class="btn btn-secondary btn-icon-small" title="Save & Clear Conversation" style="font-size: 11px; padding: 4px 8px; height: 26px; display: flex; align-items: center; gap: 4px; border: 1px dashed var(--color-danger); color: var(--color-danger);">
+                                    <i data-lucide="trash-2"></i> Clear Chat
+                                </button>
+                            </div>
+
                             <div class="chat-messages" id="chat-box">
                                 <div class="chat-message assistant">
                                     <div class="msg-avatar"><i data-lucide="bot"></i></div>
