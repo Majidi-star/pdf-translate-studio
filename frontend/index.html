@@ -13,7 +13,7 @@
     <!-- PDF.js Styles & Script -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <link rel="stylesheet" href="index.css?v=172">
+    <link rel="stylesheet" href="index.css?v=200">
 </head>
 <body class="dark-theme">
     <div class="app-container">
@@ -30,6 +30,9 @@
                 <button id="btn-help" class="btn btn-secondary">
                     <i data-lucide="help-circle"></i> Help & Manual
                 </button>
+                <div class="status-badge" id="agent-connection-status">
+                    <span class="status-dot"></span> <i data-lucide="zap-off" style="width: 14px; height: 14px;"></i> Agent Disconnected
+                </div>
                 <div class="status-badge" id="ocr-status">
                     <span class="status-dot"></span> OCR Backend: Ready
                 </div>
@@ -41,8 +44,9 @@
 
         <!-- MAIN LAYOUT -->
         <main class="app-main">
+            <div class="app-layout" id="app-layout">
             <!-- LEFT PANEL: PDF VIEWER -->
-            <section class="panel panel-pdf">
+            <section class="panel panel-pdf" id="panel-pdf">
                 <div class="panel-header">
                     <div class="panel-title">
                         <i data-lucide="file-text"></i> PDF Workspace
@@ -82,14 +86,17 @@
                 </div>
             </section>
 
+            <!-- DRAG RESIZE HANDLE -->
+            <div class="panel-resize-handle" id="panel-resize-handle" title="Drag to resize"></div>
+
             <!-- RIGHT PANEL: CONTROLS & CHAT -->
-            <section class="panel panel-controls">
+            <section class="panel panel-controls" id="panel-controls">
                 <nav class="tabs-nav">
                     <button class="tab-btn active" data-tab="tab-translate">
                         <i data-lucide="globe"></i> Translate
                     </button>
                     <button class="tab-btn" data-tab="tab-chat">
-                        <i data-lucide="message-square"></i> LLM Chat
+                        <i data-lucide="bot"></i> Agent
                     </button>
                     <button class="tab-btn" data-tab="tab-config">
                         <i data-lucide="settings"></i> Configuration
@@ -195,30 +202,50 @@
                     <!-- TAB 2: CHAT -->
                     <div class="tab-content" id="tab-chat">
                         <div class="chat-container">
-                            <!-- Chat Sessions & Clear Controls -->
-                            <div class="chat-header-controls">
-                                <div style="display: flex; align-items: center; gap: 6px; flex: 1;">
-                                    <span class="chat-header-title">Saved Chats:</span>
-                                    <div class="select-wrapper" style="flex: 1; max-width: 220px;">
-                                        <select id="chat-sessions-select">
-                                            <option value="new">New Conversation</option>
-                                        </select>
-                                    </div>
+
+                            <!-- ── Sidebar Header ─────────────────────────────── -->
+                            <div class="chat-sidebar-header">
+                                <div class="chat-header-title-group">
+                                    <i data-lucide="bot" style="width:14px;height:14px;color:var(--color-primary);"></i>
+                                    <span class="chat-title-text" id="chat-active-title">LingoPDF Agent</span>
                                 </div>
-                                <button id="btn-clear-chat" title="Save & Clear Conversation">
-                                    <i data-lucide="trash-2"></i> Clear Chat
-                                </button>
+                                <div class="chat-header-actions">
+                                    <!-- New Chat -->
+                                    <button class="chat-icon-btn" id="btn-new-chat-header" title="New Chat">
+                                        <i data-lucide="plus"></i>
+                                    </button>
+                                    <!-- Export Markdown -->
+                                    <button class="chat-icon-btn" id="btn-export-chat" title="Export as Markdown">
+                                        <i data-lucide="download"></i>
+                                    </button>
+                                    <!-- History Drawer Toggle -->
+                                    <button class="chat-icon-btn" id="btn-toggle-history" title="Chat History">
+                                        <i data-lucide="history"></i>
+                                    </button>
+                                </div>
                             </div>
 
-                            <div class="chat-messages" id="chat-box">
-                                <div class="chat-message assistant">
-                                    <div class="msg-avatar"><i data-lucide="bot"></i></div>
-                                    <div class="msg-content">
-                                        Hello! I'm your document assistant. Upload a PDF, extract the text layout, or select any text block, and ask me questions about it!
+                            <!-- ── History Drawer ─────────────────────────────── -->
+                            <div class="history-drawer" id="history-drawer">
+                                <div class="history-drawer-inner">
+                                    <div class="history-drawer-top">
+                                        <h4>Conversation History</h4>
+                                        <button class="btn-new-chat-drawer" id="btn-new-chat-drawer">
+                                            <i data-lucide="plus" style="width:11px;height:11px;"></i> New Chat
+                                        </button>
+                                    </div>
+                                    <div class="history-session-list" id="history-session-list">
+                                        <p class="history-empty">No saved conversations yet.</p>
                                     </div>
                                 </div>
                             </div>
-                            
+
+                            <!-- ── Chat Messages ──────────────────────────────── -->
+                            <div class="chat-messages" id="chat-box"></div>
+
+
+
+                            <!-- ── Context Banner ─────────────────────────────── -->
                             <div class="chat-context-banner" id="chat-context-banner" style="display: none;">
                                 <div class="context-info">
                                     <i data-lucide="link"></i>
@@ -227,10 +254,12 @@
                                 <button class="btn-clear-context" id="btn-clear-context"><i data-lucide="x"></i></button>
                             </div>
 
+                            <!-- ── Input Area ─────────────────────────────────── -->
                             <div class="chat-input-area">
-                                <textarea id="chat-input" placeholder="Type a message or ask about the document..."></textarea>
+                                <textarea id="chat-input" placeholder="Ask about the document, or give a command…" rows="1"></textarea>
                                 <button id="btn-send-chat" class="btn btn-primary"><i data-lucide="send"></i></button>
                             </div>
+
                         </div>
                     </div>
 
@@ -252,6 +281,10 @@
                                     <label class="radio-label">
                                         <input type="radio" name="ocr-mode" value="local">
                                         <span>Marker (Local Model CLI)</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="ocr-mode" value="unlimited-ocr">
+                                        <span>Unlimited-OCR (Baidu 3B Local)</span>
                                     </label>
                                 </div>
                             </div>
@@ -360,6 +393,7 @@
                     </div>
                 </div>
             </section>
+            </div><!-- /app-layout -->
         </main>
 
         <!-- FLOATING SELECTION TOOLTIP -->
@@ -508,6 +542,7 @@
         </div>
     </div>
     
-    <script src="app.js?v=171"></script>
+    <script src="app.js?v=172"></script>
+    <script src="agent_tools.js"></script>
 </body>
 </html>

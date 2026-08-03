@@ -8,8 +8,9 @@ from backend.services.pdf_service import get_async_client
 
 # Installer global state
 INSTALL_STATE = {
-    "status": "idle",          # "idle", "fetching", "downloading", "paused", "completed", "failed"
+    "status": "idle",          # "idle", "fetching", "downloading", "paused", "completed", "failed", "busy"
     "progress": 0,             # 0 to 100
+    "model": "",               # active model being downloaded
     "current_repo": "",
     "current_file": "",
     "downloaded_bytes": 0,
@@ -24,21 +25,87 @@ CANCEL_FLAG = False
 download_thread = None
 state_lock = threading.Lock()
 
-# Standard models and their primary files to download
-REPOS = [
-    {
-        "repo": "vikp/surya_layout",
-        "files": ["config.json", "model.safetensors", "preprocessor_config.json"]
-    },
-    {
-        "repo": "vikp/texify",
-        "files": ["config.json", "model.safetensors", "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"]
-    }
-]
+# Models configurations
+MODEL_REPOS = {
+    "marker": [
+        {
+            "repo": "vikp/surya_layout",
+            "files": ["config.json", "model.safetensors", "preprocessor_config.json"]
+        },
+        {
+            "repo": "vikp/texify",
+            "files": ["config.json", "model.safetensors", "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"]
+        }
+    ],
+    "unlimited-ocr": [
+        {
+            "repo": "baidu/Unlimited-OCR",
+            "files": [
+                "config.json",
+                "configuration_deepseek_v2.py",
+                "conversation.py",
+                "deepencoder.py",
+                "model-00001-of-000001.safetensors",
+                "model.safetensors.index.json",
+                "modeling_deepseekv2.py",
+                "modeling_unlimitedocr.py",
+                "processor_config.json",
+                "special_tokens_map.json",
+                "tokenizer.json",
+                "tokenizer_config.json"
+            ]
+        }
+    ]
+}
 
-def get_download_status() -> Dict[str, Any]:
+def get_download_status(model_name: str = "marker") -> Dict[str, Any]:
     with state_lock:
-        return INSTALL_STATE.copy()
+        current_status = INSTALL_STATE["status"]
+        current_model = INSTALL_STATE.get("model", "")
+        
+        # If the installer is currently active downloading this specific model
+        if current_status in ("fetching", "downloading", "paused") and current_model == model_name:
+            return INSTALL_STATE.copy()
+            
+        # If installer is downloading another model
+        if current_status in ("fetching", "downloading", "paused") and current_model != model_name:
+            return {
+                "status": "busy",
+                "progress": 0,
+                "model": model_name,
+                "current_repo": f"Another model ({current_model}) is downloading",
+                "current_file": "",
+                "downloaded_bytes": 0,
+                "total_bytes": 0,
+                "speed": "0 KB/s",
+                "error": f"Downloader is busy with model '{current_model}'."
+            }
+            
+        # Otherwise (idle, completed, failed), check disk installation
+        installed = is_model_installed(model_name)
+        if installed:
+            return {
+                "status": "completed",
+                "progress": 100,
+                "model": model_name,
+                "current_repo": model_name,
+                "current_file": "All files verified on disk.",
+                "downloaded_bytes": 0,
+                "total_bytes": 0,
+                "speed": "0 KB/s",
+                "error": ""
+            }
+        else:
+            # Return state but make sure it is idle/failed for this model
+            res = INSTALL_STATE.copy()
+            if res["status"] == "completed" or res.get("model") != model_name:
+                res["status"] = "idle"
+                res["progress"] = 0
+                res["model"] = model_name
+                res["current_repo"] = ""
+                res["current_file"] = ""
+                res["speed"] = "0 KB/s"
+            return res
 
 def pause_download():
     global PAUSE_FLAG
@@ -61,7 +128,7 @@ def cancel_download():
         INSTALL_STATE["error"] = ""
         print("[Installer] Cancel requested.")
 
-def start_download(proxy_url: Optional[str] = None):
+def start_download(model_name: str = "marker", proxy_url: Optional[str] = None):
     global download_thread, PAUSE_FLAG, CANCEL_FLAG
     
     with state_lock:
@@ -71,11 +138,12 @@ def start_download(proxy_url: Optional[str] = None):
         PAUSE_FLAG = False
         CANCEL_FLAG = False
         INSTALL_STATE["status"] = "fetching"
+        INSTALL_STATE["model"] = model_name
         INSTALL_STATE["error"] = ""
         
     def worker():
         try:
-            asyncio.run(download_process(proxy_url))
+            asyncio.run(download_process(model_name, proxy_url))
         except Exception as e:
             with state_lock:
                 INSTALL_STATE["status"] = "failed"
@@ -85,12 +153,15 @@ def start_download(proxy_url: Optional[str] = None):
     download_thread = threading.Thread(target=worker, daemon=True)
     download_thread.start()
 
-async def download_process(proxy_url: Optional[str]):
+async def download_process(model_name: str, proxy_url: Optional[str]):
     global PAUSE_FLAG, CANCEL_FLAG
     
     # 1. Fetch metadata and file sizes
     cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
-    
+    repos = MODEL_REPOS.get(model_name, [])
+    if not repos:
+        raise Exception(f"Unknown model name: {model_name}")
+        
     with state_lock:
         INSTALL_STATE["current_repo"] = "Metadata fetching..."
         INSTALL_STATE["current_file"] = ""
@@ -101,7 +172,7 @@ async def download_process(proxy_url: Optional[str]):
         manifest = []
         total_size = 0
         
-        for item in REPOS:
+        for item in repos:
             repo = item["repo"]
             files = item["files"]
             
@@ -132,7 +203,10 @@ async def download_process(proxy_url: Optional[str]):
                         file_size = int(head_resp.headers.get("content-length", 0))
                 except Exception:
                     # Default sizes for fallback
-                    file_size = 1200000000 if "model.safetensors" in filename else 2048
+                    if "safetensors" in filename:
+                        file_size = 6670000000 if "Unlimited-OCR" in repo else 1200000000
+                    else:
+                        file_size = 2048
                     
                 total_size += file_size
                 manifest.append({
@@ -282,3 +356,37 @@ def format_speed(bytes_per_sec: float) -> str:
     elif bytes_per_sec >= 1024:
         return f"{bytes_per_sec / 1024:.2f} KB/s"
     return f"{bytes_per_sec:.0f} B/s"
+
+# Check if model files are fully downloaded locally
+def is_model_installed(model_name: str) -> bool:
+    cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+    repos = MODEL_REPOS.get(model_name, [])
+    if not repos:
+        return False
+    for item in repos:
+        repo = item["repo"]
+        files = item["files"]
+        repo_normalized = f"models--{repo.replace('/', '--')}"
+        repo_path = os.path.join(cache_dir, repo_normalized, "snapshots")
+        if not os.path.exists(repo_path):
+            return False
+        
+        subdirs = [os.path.join(repo_path, d) for d in os.listdir(repo_path) if os.path.isdir(os.path.join(repo_path, d))]
+        if not subdirs:
+            return False
+            
+        found_all_files = False
+        for snap_dir in subdirs:
+            has_all = True
+            for filename in files:
+                target_path = os.path.join(snap_dir, filename)
+                if not os.path.exists(target_path) or os.path.getsize(target_path) < 100:
+                    has_all = False
+                    break
+            if has_all:
+                found_all_files = True
+                break
+        if not found_all_files:
+            return False
+    return True
+

@@ -199,3 +199,90 @@ def extract_pdf_fallback(file_bytes: bytes) -> Dict[str, Any]:
         "pages": pages,
         "source": "pymupdf_fallback"
     }
+
+async def convert_pdf_unlimited_ocr(file_bytes: bytes, filename: str) -> Dict[str, Any]:
+    """
+    High-quality OCR and layout parsing using Baidu's 3B parameter Unlimited-OCR model.
+    Converts PDF pages to images and processes them via transformers.
+    """
+    try:
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+        import fitz
+    except ImportError:
+        raise Exception(
+            "Unlimited-OCR requires torch, transformers, and accelerate to be installed. "
+            "Please install them in your local environment first."
+        )
+        
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    
+    print(f"[Unlimited-OCR] Initializing model baidu/Unlimited-OCR on device: {device} ({dtype})...")
+    
+    try:
+        tokenizer = AutoTokenizer.from_pretrained('baidu/Unlimited-OCR', trust_remote_code=True)
+        model = AutoModel.from_pretrained(
+            'baidu/Unlimited-OCR', 
+            trust_remote_code=True, 
+            use_safetensors=True, 
+            torch_dtype=dtype
+        ).eval().to(device)
+    except Exception as e:
+        raise Exception(
+            f"Failed to load Unlimited-OCR model. Ensure model weights are fully installed "
+            f"via the Configuration settings panel. Error details: {str(e)}"
+        )
+        
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    pages = []
+    full_markdown = []
+    
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for idx, page in enumerate(doc):
+            # Render page to PNG
+            pix = page.get_pixmap(dpi=150)
+            img_path = os.path.join(tmp_dir, f"page_{idx+1}.png")
+            pix.save(img_path)
+            
+            # Setup output path
+            page_output_dir = os.path.join(tmp_dir, f"output_{idx+1}")
+            os.makedirs(page_output_dir, exist_ok=True)
+            
+            try:
+                # Unlimited-OCR inference call
+                model.infer(
+                    tokenizer,
+                    prompt='<image>document parsing.',
+                    image_file=img_path,
+                    output_path=page_output_dir
+                )
+                
+                # Retrieve parsed output text files
+                page_text = ""
+                for file in os.listdir(page_output_dir):
+                    file_path = os.path.join(page_output_dir, file)
+                    if os.path.isfile(file_path):
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            page_text = f.read()
+                        break
+                
+                if not page_text:
+                    page_text = f"[Unlimited-OCR successfully parsed page {idx+1} but output was empty]"
+            except Exception as ex:
+                print(f"[Unlimited-OCR] Page {idx+1} parsing failed: {str(ex)}")
+                page_text = f"[Error parsing page {idx+1} layout: {str(ex)}]"
+                
+            full_markdown.append(page_text)
+            pages.append({
+                "page": idx + 1,
+                "text": page_text
+            })
+            
+    md_content = "\n\n---\n\n".join(full_markdown)
+    return {
+        "markdown": md_content,
+        "pages": pages,
+        "source": "local_unlimited_ocr"
+    }
+

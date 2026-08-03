@@ -365,6 +365,216 @@ async def execute_llm_call(
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
 
+async def execute_llm_call_stream(
+    messages: List[Dict[str, str]],
+    provider: str,
+    api_key: Optional[str] = None,
+    api_url: Optional[str] = None,
+    model: Optional[str] = None,
+    proxy: Optional[str] = None
+):
+    """
+    Async generator that streams text chunks from various LLM providers.
+    Yields plain text strings. Caller wraps into SSE format.
+    Falls back to non-streaming execute_llm_call() for providers without streaming support.
+    """
+    provider = provider.lower()
+
+    # ── 1. Ollama ────────────────────────────────────────────────────────────
+    if provider == "ollama":
+        url = (api_url or "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
+        payload = {
+            "model": model or "llama3",
+            "messages": messages,
+            "stream": True
+        }
+        client_proxy = None if is_local_url(url) else proxy
+        async with get_async_client(client_proxy) as client:
+            try:
+                async with client.stream("POST", url, json=payload, timeout=120) as response:
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        raise Exception(f"Ollama error ({response.status_code}): {body.decode()}")
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        import json as _json
+                        try:
+                            data = _json.loads(line)
+                            chunk = data.get("message", {}).get("content", "")
+                            if chunk:
+                                yield chunk
+                            if data.get("done"):
+                                break
+                        except Exception:
+                            continue
+            except Exception as e:
+                raise Exception(f"Ollama streaming failed: {str(e)}")
+
+    # ── 2. OpenAI / Custom OpenAI ────────────────────────────────────────────
+    elif provider == "openai":
+        url = (api_url or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        payload = {
+            "model": model or "gpt-4o-mini",
+            "messages": messages,
+            "stream": True
+        }
+        import json as _json
+        async with get_async_client(proxy) as client:
+            try:
+                async with client.stream("POST", url, headers=headers, json=payload, timeout=120) as response:
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        raise Exception(f"OpenAI error ({response.status_code}): {body.decode()}")
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = _json.loads(data_str)
+                            chunk = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if chunk:
+                                yield chunk
+                        except Exception:
+                            continue
+            except Exception as e:
+                raise Exception(f"OpenAI streaming failed: {str(e)}")
+
+    # ── 3. Gemini ─────────────────────────────────────────────────────────────
+    elif provider == "gemini":
+        target_model = model or "gemini-1.5-flash"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:streamGenerateContent?alt=sse&key={api_key or ''}"
+        gemini_contents = []
+        system_instruction = None
+        for msg in messages:
+            if msg["role"] == "system":
+                system_instruction = {"parts": [{"text": msg["content"]}]}
+            else:
+                gemini_role = "model" if msg["role"] == "assistant" else "user"
+                gemini_contents.append({"role": gemini_role, "parts": [{"text": msg["content"]}]})
+        payload: Dict[str, Any] = {"contents": gemini_contents}
+        if system_instruction:
+            payload["systemInstruction"] = system_instruction
+        import json as _json
+        async with get_async_client(proxy) as client:
+            try:
+                async with client.stream("POST", url, json=payload, timeout=120) as response:
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        raise Exception(f"Gemini error ({response.status_code}): {body.decode()}")
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        try:
+                            data = _json.loads(data_str)
+                            candidates = data.get("candidates", [])
+                            if candidates:
+                                parts = candidates[0].get("content", {}).get("parts", [])
+                                for part in parts:
+                                    text = part.get("text", "")
+                                    if text:
+                                        yield text
+                        except Exception:
+                            continue
+            except Exception as e:
+                raise Exception(f"Gemini streaming failed: {str(e)}")
+
+    # ── 4. Anthropic ──────────────────────────────────────────────────────────
+    elif provider == "anthropic":
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {
+            "x-api-key": api_key or "",
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+        system_prompt = ""
+        claude_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompt = msg["content"]
+            else:
+                role = "assistant" if msg["role"] == "assistant" else "user"
+                claude_messages.append({"role": role, "content": msg["content"]})
+        payload = {
+            "model": model or "claude-3-5-sonnet-20240620",
+            "max_tokens": 4096,
+            "messages": claude_messages,
+            "stream": True
+        }
+        if system_prompt:
+            payload["system"] = system_prompt
+        import json as _json
+        async with get_async_client(proxy) as client:
+            try:
+                async with client.stream("POST", url, headers=headers, json=payload, timeout=120) as response:
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        raise Exception(f"Anthropic error ({response.status_code}): {body.decode()}")
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        try:
+                            data = _json.loads(data_str)
+                            if data.get("type") == "content_block_delta":
+                                chunk = data.get("delta", {}).get("text", "")
+                                if chunk:
+                                    yield chunk
+                        except Exception:
+                            continue
+            except Exception as e:
+                raise Exception(f"Anthropic streaming failed: {str(e)}")
+
+    # ── 5. DeepSeek ───────────────────────────────────────────────────────────
+    elif provider == "deepseek":
+        url = "https://api.deepseek.com/chat/completions"
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        payload = {
+            "model": model or "deepseek-chat",
+            "messages": messages,
+            "stream": True
+        }
+        import json as _json
+        async with get_async_client(proxy) as client:
+            try:
+                async with client.stream("POST", url, headers=headers, json=payload, timeout=120) as response:
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        raise Exception(f"DeepSeek error ({response.status_code}): {body.decode()}")
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = _json.loads(data_str)
+                            chunk = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if chunk:
+                                yield chunk
+                        except Exception:
+                            continue
+            except Exception as e:
+                raise Exception(f"DeepSeek streaming failed: {str(e)}")
+
+    else:
+        # Unknown provider — fall back to non-streaming
+        result = await execute_llm_call(messages, provider, api_key, api_url, model, proxy)
+        yield result
+
+
 async def translate_text(
     text: str,
     target_lang: str,

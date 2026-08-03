@@ -17,10 +17,13 @@ const state = {
     selectedText: "",
     selectionMode: "text", // "text" or "area"
     activeSelectionBox: null,
-    chatHistory: [
-        { role: "assistant", content: "Hello! I'm your document assistant. Upload a PDF, extract the text layout, or select any text block, and ask me questions about it!" }
-    ],
-    attachedContext: "", // selection context attached to chat
+    attachedContext: "",
+    // ── Chat State ──────────────────────────────────────────────
+    chatHistory: [],
+    chatSessions: [],
+    currentSessionId: "new",
+    isAgentWorking: false,
+    liveSteps: [],
     config: {
         ocrMode: "fallback",
         datalabKey: "",
@@ -85,11 +88,6 @@ const elements = {
     btnCopyOcr: document.getElementById("btn-copy-ocr"),
     btnCopyTranslated: document.getElementById("btn-copy-translated"),
     
-    chatBox: document.getElementById("chat-box"),
-    chatInput: document.getElementById("chat-input"),
-    btnSendChat: document.getElementById("btn-send-chat"),
-    chatContextBanner: document.getElementById("chat-context-banner"),
-    btnClearContext: document.getElementById("btn-clear-context"),
     
     ocrModeInputs: document.getElementsByName("ocr-mode"),
     groupDatalabKey: document.getElementById("group-datalab-key"),
@@ -144,9 +142,31 @@ const elements = {
     translationChunkSize: document.getElementById("translation-chunk-size"),
     translationDelay: document.getElementById("translation-delay"),
 
-    // Saved Chat Elements
+    // Saved Chat Elements (legacy hidden select kept for compatibility)
     chatSessionsSelect: document.getElementById("chat-sessions-select"),
-    btnClearChat: document.getElementById("btn-clear-chat")
+    btnClearChat: document.getElementById("btn-clear-chat"),
+    // ── New Chat UI Elements ──────────────────────────────────────
+    chatBox: document.getElementById("chat-box"),
+    chatInput: document.getElementById("chat-input"),
+    btnSendChat: document.getElementById("btn-send-chat"),
+    chatContextBanner: document.getElementById("chat-context-banner"),
+    btnClearContext: document.getElementById("btn-clear-context"),
+    btnNewChatHeader: document.getElementById("btn-new-chat-header"),
+    btnExportChat: document.getElementById("btn-export-chat"),
+    btnToggleHistory: document.getElementById("btn-toggle-history"),
+    historyDrawer: document.getElementById("history-drawer"),
+    historySessionList: document.getElementById("history-session-list"),
+    btnNewChatDrawer: document.getElementById("btn-new-chat-drawer"),
+    chatActiveTitle: document.getElementById("chat-active-title"),
+    agentStepsLive: document.getElementById("agent-steps-live"),
+    stepsSpinner: document.getElementById("steps-spinner"),
+    stepsLabel: document.getElementById("steps-label"),
+    stepsList: document.getElementById("steps-list"),
+    stepsHeaderToggle: document.getElementById("steps-header-toggle"),
+    panelResizeHandle: document.getElementById("panel-resize-handle"),
+    panelPdf: document.getElementById("panel-pdf"),
+    panelControls: document.getElementById("panel-controls"),
+    appLayout: document.getElementById("app-layout")
 };
 
 // Load saved configuration from LocalStorage
@@ -157,11 +177,12 @@ function loadConfig() {
     // Re-populate provider dropdown options
     repopulateProviderDropdown();
     
-    // Read saved chat sessions
-    state.chatSessions = JSON.parse(localStorage.getItem("lingo_pdf_chat_sessions") || "[]");
+    // Read saved chat sessions (v2 key — unlimited)
+    state.chatSessions = JSON.parse(localStorage.getItem("lingo_pdf_chat_sessions_v2") || "[]");
     state.currentSessionId = "new";
+    state.chatHistory = [];
     setTimeout(() => {
-        repopulateChatSessionsDropdown();
+        initChatUI();
     }, 100);
     
     const saved = localStorage.getItem("lingo_pdf_config");
@@ -227,9 +248,8 @@ function saveConfig() {
 
 // Update backend connection statuses in the header
 function updateStatusIndicators() {
-    // OCR status text
     const ocrMode = state.config.ocrMode;
-    const modeName = ocrMode === "fallback" ? "PyMuPDF" : ocrMode === "datalab" ? "Datalab" : "Marker (Local)";
+    const modeName = ocrMode === "fallback" ? "PyMuPDF" : ocrMode === "datalab" ? "Datalab" : ocrMode === "local" ? "Marker (Local)" : "Unlimited-OCR (Baidu)";
     elements.ocrStatusBadge.innerHTML = `<span class="status-dot"></span> OCR Backend: ${modeName}`;
     elements.ocrStatusBadge.className = "status-badge connected";
     
@@ -266,7 +286,7 @@ function toggleOcrFields(mode) {
     if (mode === "datalab") {
         elements.groupDatalabKey.style.display = "flex";
         elements.localInstallerCard.style.display = "none";
-    } else if (mode === "local") {
+    } else if (mode === "local" || mode === "unlimited-ocr") {
         elements.groupDatalabKey.style.display = "none";
         elements.localInstallerCard.style.display = "flex";
         checkInstallerStatus(); // Fetch status immediately
@@ -778,24 +798,42 @@ function setupEventListeners() {
     // Full translate button
     elements.btnTranslateDoc.addEventListener("click", translateDocument);
 
-    // Chat Message Actions
-    elements.btnSendChat.addEventListener("click", sendChatMessage);
-    elements.chatInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            sendChatMessage();
-        }
-    });
-    elements.btnClearContext.addEventListener("click", () => {
+
+    // ── New Chat UI event listeners ─────────────────────────────────
+    if (elements.btnNewChatHeader) elements.btnNewChatHeader.addEventListener("click", startNewSession);
+    if (elements.btnNewChatDrawer) elements.btnNewChatDrawer.addEventListener("click", startNewSession);
+    if (elements.btnExportChat) elements.btnExportChat.addEventListener("click", exportChatToMarkdown);
+    if (elements.btnToggleHistory) elements.btnToggleHistory.addEventListener("click", toggleHistoryDrawer);
+    if (elements.stepsHeaderToggle) elements.stepsHeaderToggle.addEventListener("click", toggleStepsCollapse);
+
+    // Context banner clear
+    if (elements.btnClearContext) elements.btnClearContext.addEventListener("click", () => {
         state.attachedContext = "";
-        elements.chatContextBanner.style.display = "none";
+        if (elements.chatContextBanner) elements.chatContextBanner.style.display = "none";
     });
-    
-    // Clear Chat and switch session listeners
-    elements.btnClearChat.addEventListener("click", clearChat);
-    elements.chatSessionsSelect.addEventListener("change", (e) => {
-        loadChatSession(e.target.value);
-    });
+
+    // Drag-Resize panel
+    initPanelResize();
+
+    // Auto-grow textarea + Enter/Shift+Enter
+    if (elements.chatInput) {
+        elements.chatInput.addEventListener("input", autoGrowTextarea);
+        elements.chatInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
+        // Restore draft from localStorage
+        const draft = localStorage.getItem(`chat_draft_${state.currentSessionId}`);
+        if (draft) elements.chatInput.value = draft;
+        elements.chatInput.addEventListener("input", () => {
+            localStorage.setItem(`chat_draft_${state.currentSessionId}`, elements.chatInput.value);
+            autoGrowTextarea();
+        });
+    }
+
+    if (elements.btnSendChat) elements.btnSendChat.addEventListener("click", sendChatMessage);
 }
 
 // Clipboard Helper
@@ -1391,132 +1429,768 @@ async function translateDocument() {
     }, 4000);
 }
 
-// Chat functions
-async function sendChatMessage() {
-    const userText = elements.chatInput.value.trim();
-    if (!userText) return;
-    
-    // Automatically retrieve document text context if layout OCR hasn't been run but a PDF is loaded!
-    let docContext = state.extractedMarkdown;
-    if (!docContext && state.pdfDoc) {
-        try {
-            docContext = await extractPdfTextClientSide();
-        } catch (e) {
-            console.error("Client-side dynamic text extraction failed", e);
+// ════════════════════════════════════════════════════════════════════════
+//  PREMIUM AGENTIC CHAT SYSTEM
+// ════════════════════════════════════════════════════════════════════════
+
+// ── Utility: Simple Markdown to HTML renderer ────────────────────────
+function renderMarkdown(text) {
+    // Strip STEPS_JSON hidden blocks before display
+    text = text.replace(/<!--STEPS_JSON:.*?STEPS_JSON_END-->/gs, '').trim();
+    // Escape HTML first
+    let html = text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Code blocks
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+        `<pre><code class="lang-${lang}">${code.trim()}</code></pre>`);
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Bold
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    // Blockquote
+    html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+    // HR
+    html = html.replace(/^---$/gm, '<hr>');
+    // Unordered list items
+    html = html.replace(/^[\*\-] (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, m => `<ul>${m}</ul>`);
+    // Ordered list items
+    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+    // Line breaks (double newline → paragraph break)
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
+// ── Utility: Levenshtein similarity ──────────────────────────────────
+function levenshteinSimilarity(a, b) {
+    a = a.toLowerCase(); b = b.toLowerCase();
+    const m = a.length, n = b.length;
+    if (m === 0 || n === 0) return 0;
+    const dp = Array.from({length: m+1}, (_, i) => [i, ...Array(n).fill(0)]);
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            dp[i][j] = a[i-1] === b[j-1]
+                ? dp[i-1][j-1]
+                : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
         }
     }
+    return 1 - dp[m][n] / Math.max(m, n);
+}
 
-    elements.chatInput.value = "";
+function tokenIntersection(a, b) {
+    const ta = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
+    const tb = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
+    if (!ta.size || !tb.size) return 0;
+    let inter = 0;
+    ta.forEach(t => { if (tb.has(t)) inter++; });
+    return inter / Math.max(ta.size, tb.size);
+}
+
+function isSimilar(a, b, threshold = 0.75) {
+    return levenshteinSimilarity(a, b) >= threshold || tokenIntersection(a, b) >= threshold;
+}
+
+// ── Auto-grow textarea ────────────────────────────────────────────────
+function autoGrowTextarea() {
+    const ta = elements.chatInput;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(Math.max(ta.scrollHeight, 48), 160) + 'px';
+}
+
+// ── Panel Drag Resize ─────────────────────────────────────────────────
+function initPanelResize() {
+    const handle = elements.panelResizeHandle;
+    const layout = elements.appLayout;
+    const controlsPanel = elements.panelControls;
+    if (!handle || !layout || !controlsPanel) return;
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    handle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = controlsPanel.getBoundingClientRect().width;
+        layout.classList.add('is-resizing');
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        const delta = startX - e.clientX;
+        const newWidth = Math.min(720, Math.max(280, startWidth + delta));
+        document.documentElement.style.setProperty('--right-panel-width', newWidth + 'px');
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!isResizing) return;
+        isResizing = false;
+        layout.classList.remove('is-resizing');
+        handle.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    });
+}
+
+// ── Session Management ────────────────────────────────────────────────
+const WELCOME_MSG = { role: "assistant", content: "Hello! I'm your LingoPDF Agent. Upload a PDF, extract the text, or select any passage and ask me questions about it!" };
+
+function initChatUI() {
+    state.chatHistory = [{ ...WELCOME_MSG }];
+    renderChatMessages();
+    renderHistoryDrawer();
+}
+
+function startNewSession() {
+    // Save current chat first if it has content
+    if (state.chatHistory.length > 1) saveActiveChatSession();
+    state.currentSessionId = "new";
+    state.chatHistory = [{ ...WELCOME_MSG }];
+    state.liveSteps = [];
+    clearDraftText();
+    if (elements.chatActiveTitle) elements.chatActiveTitle.textContent = 'LingoPDF Agent';
+    if (elements.historyDrawer) elements.historyDrawer.classList.remove('open');
+    if (elements.btnToggleHistory) elements.btnToggleHistory.classList.remove('active');
+    renderChatMessages();
+    renderHistoryDrawer();
+}
+
+function saveActiveChatSession() {
+    if (state.chatHistory.length <= 1) return;
+
+    // Auto-title: first user message, 25 chars
+    const firstUser = state.chatHistory.find(m => m.role === 'user');
+    let title = firstUser ? firstUser.content.replace(/<!--STEPS_JSON:.*?STEPS_JSON_END-->/gs, '').substring(0, 25) : '';
+    if (!title) title = 'Session ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    else if (firstUser && firstUser.content.length > 25) title += '…';
+
+    const now = Date.now();
+    if (state.currentSessionId === 'new') {
+        const newSession = {
+            id: 'session-' + now,
+            title,
+            createdAt: now,
+            messages: [...state.chatHistory]
+        };
+        state.currentSessionId = newSession.id;
+        state.chatSessions.unshift(newSession);
+    } else {
+        const sess = state.chatSessions.find(s => s.id === state.currentSessionId);
+        if (sess) {
+            sess.messages = [...state.chatHistory];
+            sess.title = title;
+        } else {
+            state.chatSessions.unshift({ id: state.currentSessionId, title, createdAt: now, messages: [...state.chatHistory] });
+        }
+    }
+    localStorage.setItem('lingo_pdf_chat_sessions_v2', JSON.stringify(state.chatSessions));
+    renderHistoryDrawer();
+    if (elements.chatActiveTitle) elements.chatActiveTitle.textContent = title;
+}
+
+function loadChatSession(sessionId) {
+    if (state.chatHistory.length > 1) saveActiveChatSession();
+    const sess = state.chatSessions.find(s => s.id === sessionId);
+    if (!sess) return;
+    state.currentSessionId = sess.id;
+    state.chatHistory = [...sess.messages];
+    state.liveSteps = [];
+    if (elements.chatActiveTitle) elements.chatActiveTitle.textContent = sess.title;
+    // Restore draft
+    const draft = localStorage.getItem(`chat_draft_${sess.id}`);
+    if (elements.chatInput) elements.chatInput.value = draft || '';
+    if (elements.historyDrawer) elements.historyDrawer.classList.remove('open');
+    if (elements.btnToggleHistory) elements.btnToggleHistory.classList.remove('active');
+    renderChatMessages();
+    renderHistoryDrawer();
+}
+
+function deleteChatSession(sessionId) {
+    state.chatSessions = state.chatSessions.filter(s => s.id !== sessionId);
+    localStorage.setItem('lingo_pdf_chat_sessions_v2', JSON.stringify(state.chatSessions));
+    if (state.currentSessionId === sessionId) startNewSession();
+    else renderHistoryDrawer();
+}
+
+function clearDraftText() {
+    if (elements.chatInput) elements.chatInput.value = '';
+    localStorage.removeItem(`chat_draft_${state.currentSessionId}`);
+}
+
+// ── History Drawer ────────────────────────────────────────────────────
+function toggleHistoryDrawer() {
+    const drawer = elements.historyDrawer;
+    const btn = elements.btnToggleHistory;
+    if (!drawer) return;
+    const isOpen = drawer.classList.toggle('open');
+    if (btn) btn.classList.toggle('active', isOpen);
+}
+
+function renderHistoryDrawer() {
+    const list = elements.historySessionList;
+    if (!list) return;
+    if (!state.chatSessions.length) {
+        list.innerHTML = '<p class="history-empty">No saved conversations yet.</p>';
+        return;
+    }
+    list.innerHTML = state.chatSessions.map(sess => {
+        const isActive = sess.id === state.currentSessionId;
+        const date = new Date(sess.createdAt).toLocaleDateString([], {month:'short', day:'numeric'});
+        return `
+        <div class="history-session-item${isActive ? ' active' : ''}" data-id="${sess.id}">
+            <span class="history-session-title">${escapeHtml(sess.title)}</span>
+            <span class="history-session-date">${date}</span>
+            <button class="btn-delete-session" data-id="${sess.id}" title="Delete">
+                <i data-lucide="trash-2"></i>
+            </button>
+        </div>`;
+    }).join('');
+    lucide.createIcons();
+    list.querySelectorAll('.history-session-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            if (e.target.closest('.btn-delete-session')) return;
+            loadChatSession(item.dataset.id);
+        });
+    });
+    list.querySelectorAll('.btn-delete-session').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm('Delete this conversation?')) deleteChatSession(btn.dataset.id);
+        });
+    });
+}
+
+// ── Steps Checklist ───────────────────────────────────────────────────
+function showStepsContainer() {
+    const box = elements.chatBox;
+    if (!box) return;
     
-    // If context is attached, append it as a reference
+    // Remove any existing active steps message bubble
+    const existing = document.getElementById('active-steps-message');
+    if (existing) existing.remove();
+
+    const activeMsg = document.createElement('div');
+    activeMsg.className = 'chat-message assistant active-steps-bubble';
+    activeMsg.id = 'active-steps-message';
+    activeMsg.innerHTML = `
+        <div class="msg-avatar"><i data-lucide="bot"></i></div>
+        <div class="msg-bubble">
+            <div class="active-steps-card">
+                <div class="active-steps-header">
+                    <div class="window-controls">
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                    </div>
+                    <span class="active-steps-title">LingoPDF Agent is active...</span>
+                </div>
+                <ul class="active-steps-list" id="active-steps-list-element">
+                </ul>
+            </div>
+        </div>
+    `;
+    box.appendChild(activeMsg);
+    lucide.createIcons();
+    box.scrollTop = box.scrollHeight;
+}
+
+function addStep(text, status = 'active') {
+    const list = document.getElementById('active-steps-list-element');
+    const li = document.createElement('li');
+    li.className = `step-item ${status}`;
+    
+    const iconHtml = status === 'done'
+        ? `<span class="step-icon done"><i data-lucide="check"></i></span>`
+        : `<span class="step-icon active"></span>`;
+        
+    li.innerHTML = `${iconHtml}<span class="step-text">${escapeHtml(text)}</span>`;
+    li.dataset.stepText = text;
+    
+    if (list) {
+        list.appendChild(li);
+        lucide.createIcons();
+        const box = elements.chatBox;
+        if (box) box.scrollTop = box.scrollHeight;
+    }
+    state.liveSteps.push({ text, status });
+    return li;
+}
+
+function updateStep(li, status) {
+    if (!li) return;
+    li.className = `step-item ${status}`;
+    const iconEl = li.querySelector('.step-icon');
+    if (iconEl) {
+        iconEl.className = `step-icon ${status}`;
+        if (status === 'done') {
+            iconEl.innerHTML = '<i data-lucide="check"></i>';
+        }
+    }
+    lucide.createIcons();
+}
+
+function finalizeStepsContainer() {
+    // No-op here since we remove the active-steps-message and insert the collapsed card on 'done'
+}
+
+function hideStepsContainer() {
+    const activeMsg = document.getElementById('active-steps-message');
+    if (activeMsg) activeMsg.remove();
+    state.liveSteps = [];
+}
+
+function toggleStepsCollapse() {
+    // No-op
+}
+
+// ── Render Chat Messages ──────────────────────────────────────────────
+function renderChatMessages() {
+    const box = elements.chatBox;
+    if (!box) return;
+    box.innerHTML = '';
+
+    if (!state.chatHistory.length) {
+        state.chatHistory = [{ ...WELCOME_MSG }];
+    }
+
+    state.chatHistory.forEach((msg, index) => {
+        // If msg is a step log message, render as collapsed actions card
+        if (msg.type === 'steps') {
+            let steps = [];
+            try { steps = JSON.parse(msg.content); } catch(e) {}
+            if (!steps.length) return;
+
+            const stepItems = steps.map(s => `
+                <li class="step-item">
+                    <i data-lucide="check"></i>
+                    <span class="step-text">${escapeHtml(s.text)}</span>
+                </li>
+            `).join('');
+
+            const stepsDiv = document.createElement('div');
+            stepsDiv.className = 'chat-message assistant collapsed-steps-bubble';
+            stepsDiv.dataset.index = index;
+            stepsDiv.innerHTML = `
+                <div class="msg-avatar"><i data-lucide="bot"></i></div>
+                <div class="msg-bubble">
+                    <div class="collapsed-steps-card">
+                        <div class="collapsed-steps-header" onclick="this.parentElement.classList.toggle('open')">
+                            <div class="collapsed-steps-header-left">
+                                <span class="status-dot-green"></span>
+                                <span class="collapsed-steps-title">Agent Actions (${steps.length})</span>
+                            </div>
+                            <i data-lucide="chevron-right" class="chevron"></i>
+                        </div>
+                        <ul class="collapsed-steps-list">
+                            ${stepItems}
+                        </ul>
+                    </div>
+                </div>
+            `;
+            box.appendChild(stepsDiv);
+            return;
+        }
+
+        const div = document.createElement('div');
+        div.className = `chat-message ${msg.role}`;
+        div.dataset.index = index;
+
+        const avatarIcon = msg.role === 'assistant' ? 'bot' : 'user';
+        const avatar = `<div class="msg-avatar"><i data-lucide="${avatarIcon}"></i></div>`;
+
+        // Extract steps JSON hidden in message content (legacy fallback)
+        const stepsMatch = msg.content.match(/<!--STEPS_JSON:(.*?)STEPS_JSON_END-->/s);
+        const displayContent = msg.role === 'assistant'
+            ? renderMarkdown(msg.content)
+            : `<span>${escapeHtml(msg.content.replace(/<!--STEPS_JSON:.*?STEPS_JSON_END-->/gs, '').trim())}</span>`;
+
+        // Stored steps legacy rendering
+        let stepsHtml = '';
+        if (stepsMatch && msg.role === 'assistant') {
+            try {
+                const steps = JSON.parse(stepsMatch[1]);
+                if (steps.length) {
+                    const stepItems = steps.map(s =>
+                        `<li class="step-item done"><span class="step-icon done"><i data-lucide="check-circle-2"></i></span><span class="step-text">${escapeHtml(s.text)}</span></li>`
+                    ).join('');
+                    stepsHtml = `
+                    <div class="agent-steps-container collapsed" style="margin:4px 0 6px 0;">
+                        <div class="steps-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                            <div class="steps-header-left">
+                                <span style="color:var(--step-done);font-size:11px;">✓</span>
+                                <span>Agent Steps (${steps.length})</span>
+                            </div>
+                            <div class="steps-chevron"><i data-lucide="chevron-down"></i></div>
+                        </div>
+                        <ul class="steps-list">${stepItems}</ul>
+                    </div>`;
+                }
+            } catch(e) {}
+        }
+
+        // Action buttons
+        let actionsHtml = '';
+        if (msg.role === 'user') {
+            actionsHtml = `
+            <div class="msg-actions">
+                <button class="msg-action-btn" data-action="edit" data-index="${index}" title="Edit">
+                    <i data-lucide="pencil"></i> Edit
+                </button>
+                <button class="msg-action-btn" data-action="retry" data-index="${index}" title="Retry">
+                    <i data-lucide="rotate-ccw"></i> Retry
+                </button>
+            </div>`;
+        } else if (msg.role === 'assistant' && index > 0) {
+            actionsHtml = `
+            <div class="msg-actions">
+                <button class="msg-action-btn" data-action="copy" data-index="${index}" title="Copy">
+                    <i data-lucide="copy"></i> Copy
+                </button>
+            </div>`;
+        }
+
+        div.innerHTML = msg.role === 'user'
+            ? `${avatar}<div class="msg-bubble">${actionsHtml}<div class="msg-content">${displayContent}</div></div>`
+            : `${avatar}<div class="msg-bubble"><div class="msg-content">${stepsHtml}${displayContent}</div>${actionsHtml}</div>`;
+
+        box.appendChild(div);
+    });
+
+    lucide.createIcons();
+    box.scrollTop = box.scrollHeight;
+
+    // Wire action buttons
+    box.querySelectorAll('[data-action]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const action = btn.dataset.action;
+            const idx = parseInt(btn.dataset.index);
+            if (action === 'edit') startInlineEdit(idx);
+            else if (action === 'retry') retryMessage(idx);
+            else if (action === 'copy') {
+                const content = state.chatHistory[idx]?.content
+                    .replace(/<!--STEPS_JSON:.*?STEPS_JSON_END-->/gs, '').trim();
+                navigator.clipboard.writeText(content || '');
+            }
+        });
+    });
+}
+
+// ── Inline Edit ───────────────────────────────────────────────────────
+function startInlineEdit(index) {
+    const box = elements.chatBox;
+    const msgDiv = box.querySelector(`[data-index="${index}"]`);
+    if (!msgDiv) return;
+    const content = state.chatHistory[index].content.trim();
+    const bubble = msgDiv.querySelector('.msg-bubble');
+    if (!bubble) return;
+
+    bubble.innerHTML = `
+        <textarea class="msg-edit-textarea" id="inline-edit-ta">${escapeHtmlAttr(content)}</textarea>
+        <div class="msg-edit-actions">
+            <button class="btn-confirm-edit" id="btn-confirm-edit"><i data-lucide="check"></i> Confirm</button>
+            <button class="btn-cancel-edit" id="btn-cancel-edit"><i data-lucide="x"></i> Cancel</button>
+        </div>`;
+    lucide.createIcons();
+    const ta = document.getElementById('inline-edit-ta');
+    ta.focus();
+    ta.selectionStart = ta.value.length;
+
+    document.getElementById('btn-confirm-edit').addEventListener('click', () => {
+        const newContent = ta.value.trim();
+        if (!newContent) return;
+        // Truncate state at this index and resend
+        state.chatHistory = state.chatHistory.slice(0, index);
+        state.chatHistory.push({ role: 'user', content: newContent });
+        renderChatMessages();
+        sendChatMessageFromContent(newContent);
+    });
+    document.getElementById('btn-cancel-edit').addEventListener('click', renderChatMessages);
+}
+
+function retryMessage(index) {
+    // Find the user message at or before this index
+    const userMsg = state.chatHistory[index];
+    if (!userMsg || userMsg.role !== 'user') return;
+    // Truncate everything from this user message onward and resend
+    const content = userMsg.content.trim();
+    state.chatHistory = state.chatHistory.slice(0, index);
+    state.chatHistory.push({ role: 'user', content });
+    renderChatMessages();
+    sendChatMessageFromContent(content);
+}
+
+function escapeHtmlAttr(text) {
+    return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Send Chat Message (SSE streaming) ────────────────────────────────
+async function sendChatMessage() {
+    const userText = elements.chatInput ? elements.chatInput.value.trim() : '';
+    if (!userText || state.isAgentWorking) return;
+    elements.chatInput.value = '';
+    autoGrowTextarea();
+    clearDraftText();
+    state.chatHistory.push({ role: 'user', content: userText });
+    renderChatMessages();
+    await sendChatMessageFromContent(userText);
+}
+
+async function sendChatMessageFromContent(userText) {
+    if (state.isAgentWorking) return;
+    state.isAgentWorking = true;
+
+    // Doc context
+    let docContext = state.extractedMarkdown;
+    if (!docContext && state.pdfDoc) {
+        try { docContext = await extractPdfTextClientSide(); } catch(e) {}
+    }
+
+    // Prompt with context
     let promptWithContext = userText;
     if (state.attachedContext) {
         promptWithContext = `Attached Reference Context:\n"""\n${state.attachedContext}\n"""\n\nUser Question: ${userText}`;
-        // Hide context banner now that it is consumed
-        state.attachedContext = "";
-        elements.chatContextBanner.style.display = "none";
+        state.attachedContext = '';
+        if (elements.chatContextBanner) elements.chatContextBanner.style.display = 'none';
     }
-    
-    // Add user message to UI state
-    state.chatHistory.push({ role: "user", content: userText });
-    renderChatMessages();
-    
-    // Create assistant typing message placeholder
-    const typingMsg = document.createElement("div");
-    typingMsg.className = "chat-message assistant typing";
-    typingMsg.innerHTML = `
-        <div class="msg-avatar"><i data-lucide="bot"></i></div>
-        <div class="msg-content">Thinking...</div>
-    `;
-    elements.chatBox.appendChild(typingMsg);
-    lucide.createIcons();
-    elements.chatBox.scrollTop = elements.chatBox.scrollHeight;
-    
-    // Prepare API call history (max 8 messages back to conserve context space)
-    let messagesPayload = state.chatHistory.map((msg, index) => {
-        // Feed the prompt context in the last user message
-        if (index === state.chatHistory.length - 1 && msg.role === "user") {
-            return { role: "user", content: promptWithContext };
-        }
-        return msg;
-    }).slice(-8);
-    
-    // Inject document context if available
-    if (docContext) {
-        messagesPayload.unshift({
-            role: "system",
-            content: `You are an intelligent PDF document assistant. Use the following text content of the active PDF document to answer the user's questions about it:\n\n${docContext}`
-        });
-    }
-    
+
+    // System prompt
+    let systemPrompt = `You are LingoPDF Agent, an intelligent assistant inside the LingoPDF application.
+You can answer questions about the active document and control the application using Tools.
+
+Available Tools:
+- switch_tab(tab_name: string) - Valid values: workspace, agent, config
+- extract_layout() - Runs OCR and text extraction on the PDF.
+- translate_document() - Translates the document.
+- set_target_language(lang: string) - Sets the translation target language.
+- select_text(text_snippet: string) - Selects text in the document.
+
+To use a tool, output a JSON block:
+\`\`\`json
+{ "tool_call": { "name": "switch_tab", "arguments": { "tab_name": "config" } } }
+\`\`\`
+Only ONE tool per response. Do NOT use a tool if just answering a question.
+
+Current Application State:
+${JSON.stringify(window.agentTools ? window.agentTools.getAppState() : { error: 'Tools disconnected' }, null, 2)}`;
+    if (docContext) systemPrompt += `\n\nActive PDF Document Text Content:\n${docContext.substring(0, 8000)}`;
+
+    // Build messages payload (filter out steps logs)
+    const messagesPayload = [
+        { role: 'system', content: systemPrompt },
+        ...state.chatHistory
+            .filter(msg => msg.type !== 'steps')
+            .map((msg, i, arr) => {
+                if (i === arr.length - 1 && msg.role === 'user')
+                    return { role: 'user', content: promptWithContext };
+                return { role: msg.role, content: msg.content.replace(/<!--STEPS_JSON:.*?STEPS_JSON_END-->/gs, '').trim() };
+            }).slice(-10)
+    ];
+
     const payload = {
         messages: messagesPayload,
-        provider: state.config.llmProvider.startsWith("custom-") ? "openai" : state.config.llmProvider,
+        provider: state.config.llmProvider.startsWith('custom-') ? 'openai' : state.config.llmProvider,
         api_key: state.config.llmKey,
         api_url: state.config.llmUrl,
         model: state.config.llmModel,
         proxy: state.config.proxyEnabled ? state.config.proxyUrl : null
     };
-    
+
+    // Add typing bubble
+    const typingDiv = document.createElement('div');
+    typingDiv.className = 'chat-message assistant typing';
+    typingDiv.innerHTML = `
+        <div class="msg-avatar"><i data-lucide="bot"></i></div>
+        <div class="msg-bubble"><div class="msg-content">
+            <span style="opacity:0.7;">Agent is thinking</span>
+            <span class="typing-dots"><span></span><span></span><span></span></span>
+        </div></div>`;
+    lucide.createIcons();
+    if (elements.chatBox) {
+        elements.chatBox.appendChild(typingDiv);
+        elements.chatBox.scrollTop = elements.chatBox.scrollHeight;
+    }
+
+    // Show steps container
+    showStepsContainer();
+    state.liveSteps = [];
+
+    let fullResponse = '';
+    let currentStepLi = null;
+
     try {
-        const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+        const response = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        
-        elements.chatBox.removeChild(typingMsg);
-        
+
         if (!response.ok) {
             const errData = await response.json();
-            throw new Error(errData.detail || "Chat request failed");
+            throw new Error(errData.detail || 'Stream request failed');
         }
-        
-        const data = await response.json();
-        state.chatHistory.push({ role: "assistant", content: data.response });
-        renderChatMessages();
-        saveActiveChatSession();
-        
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep incomplete line
+
+            for (const line of lines) {
+                if (!line.startsWith('data:')) continue;
+                const jsonStr = line.slice(5).trim();
+                if (!jsonStr) continue;
+                try {
+                    const evt = JSON.parse(jsonStr);
+
+                    if (evt.type === 'step') {
+                        // Complete previous step
+                        if (currentStepLi) updateStep(currentStepLi, 'done');
+                        currentStepLi = addStep(evt.text, evt.status === 'done' ? 'done' : 'active');
+                        if (evt.status === 'done') { updateStep(currentStepLi, 'done'); currentStepLi = null; }
+
+                    } else if (evt.type === 'chunk') {
+                        fullResponse += evt.text;
+                        // Update typing bubble with streamed content
+                        const bubble = typingDiv.querySelector('.msg-content');
+                        if (bubble) bubble.innerHTML = renderMarkdown(fullResponse);
+                        if (elements.chatBox) elements.chatBox.scrollTop = elements.chatBox.scrollHeight;
+
+                    } else if (evt.type === 'done') {
+                        fullResponse = evt.full_response || fullResponse;
+
+                        // Complete last step
+                        if (currentStepLi) updateStep(currentStepLi, 'done');
+
+                        // Remove active steps bubble and typing bubble from DOM
+                        const activeMsg = document.getElementById('active-steps-message');
+                        if (activeMsg) activeMsg.remove();
+                        if (typingDiv.parentNode) typingDiv.parentNode.removeChild(typingDiv);
+
+                        // Execute tool call if present
+                        const toolMatch = fullResponse.match(/```json\s*(\{[\s\S]*?"tool_call"[\s\S]*?\})\s*```/);
+                        if (toolMatch && window.agentTools) {
+                            try {
+                                const tb = JSON.parse(toolMatch[1]);
+                                const name = tb.tool_call?.name;
+                                const args = tb.tool_call?.arguments || {};
+                                if (name === 'switch_tab') window.agentTools.switchTab(args.tab_name);
+                                else if (name === 'extract_layout') window.agentTools.extractLayout();
+                                else if (name === 'translate_document') window.agentTools.translateDocument();
+                                else if (name === 'set_target_language') window.agentTools.setTargetLanguage(args.lang);
+                                else if (name === 'select_text') window.agentTools.selectText(args.text_snippet);
+                                fullResponse = fullResponse.replace(toolMatch[0], `\n*[Executed: ${name}]*\n`);
+                            } catch(e) { console.error('Tool exec error', e); }
+                        }
+
+                        // Split steps and text response into two separate assistant messages!
+                        // Message 1: Collapsed checklist actions
+                        const stepsJson = JSON.stringify(state.liveSteps);
+                        state.chatHistory.push({
+                            role: 'assistant',
+                            type: 'steps',
+                            content: stepsJson
+                        });
+
+                        // Message 2: LLM Text Response
+                        state.chatHistory.push({
+                            role: 'assistant',
+                            content: fullResponse
+                        });
+
+                        saveActiveChatSession();
+                        renderChatMessages();
+
+                    } else if (evt.type === 'error') {
+                        throw new Error(evt.text);
+                    }
+                } catch(parseErr) { /* ignore malformed SSE */ }
+            }
+        }
+
     } catch (err) {
-        elements.chatBox.removeChild(typingMsg);
-        state.chatHistory.push({ role: "assistant", content: `Error: ${err.message}` });
-        renderChatMessages();
+        if (typingDiv.parentNode) typingDiv.parentNode.removeChild(typingDiv);
+        state.chatHistory.push({ role: 'assistant', content: `❌ Error: ${err.message}` });
         saveActiveChatSession();
+        hideStepsContainer();
+        renderChatMessages();
+    } finally {
+        state.isAgentWorking = false;
+        if (elements.btnSendChat) elements.btnSendChat.disabled = false;
     }
 }
 
-// Render messages in chat pane
-function renderChatMessages() {
-    elements.chatBox.innerHTML = "";
+// ── Markdown Export ───────────────────────────────────────────────────
+function exportChatToMarkdown() {
+    if (state.chatHistory.length <= 1) { alert('No conversation to export.'); return; }
+
+    const lines = [`# LingoPDF Chat Export`, `*Exported: ${new Date().toLocaleString()}*`, ''];
+
     state.chatHistory.forEach(msg => {
-        const msgDiv = document.createElement("div");
-        msgDiv.className = `chat-message ${msg.role}`;
-        
-        const avatarIcon = msg.role === "assistant" ? "bot" : "user";
-        msgDiv.innerHTML = `
-            <div class="msg-avatar"><i data-lucide="${avatarIcon}"></i></div>
-            <div class="msg-content">${escapeHtml(msg.content)}</div>
-        `;
-        elements.chatBox.appendChild(msgDiv);
+        if (msg.role === 'system') return;
+        const stepsMatch = msg.content.match(/<!--STEPS_JSON:(.*?)STEPS_JSON_END-->/s);
+        const clean = msg.content.replace(/<!--STEPS_JSON:.*?STEPS_JSON_END-->/gs, '').trim();
+
+        if (msg.role === 'user') {
+            lines.push(`## 👤 User`, '', clean, '');
+        } else {
+            lines.push(`## 🤖 LingoPDF Agent`, '', clean, '');
+            if (stepsMatch) {
+                try {
+                    const steps = JSON.parse(stepsMatch[1]);
+                    lines.push('**Agent Steps:**');
+                    lines.push('```json');
+                    lines.push(JSON.stringify(steps, null, 2));
+                    lines.push('```', '');
+                } catch(e) {}
+            }
+        }
+        lines.push('---', '');
     });
-    
-    // Re-trigger icon rendering
-    lucide.createIcons();
-    elements.chatBox.scrollTop = elements.chatBox.scrollHeight;
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lingo-chat-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
-// Simple HTML Escaper
+// ── Legacy compatibility shims ────────────────────────────────────────
+function clearChat() { startNewSession(); }
+function loadChatSessionById(id) { loadChatSession(id); }
+function repopulateChatSessionsDropdown() { renderHistoryDrawer(); }
+
+// ── escapeHtml ────────────────────────────────────────────────────────
 function escapeHtml(text) {
+    if (typeof text !== 'string') return '';
     return text
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
 // Connection Tester & Installer Helpers
 let installerInterval = null;
+
+
 
 async function testConnection() {
     elements.btnTestConnection.disabled = true;
@@ -1558,7 +2232,13 @@ async function testConnection() {
 
 async function startInstaller() {
     elements.btnInstStart.disabled = true;
+    let activeModel = "marker";
+    const checkedRadio = document.querySelector('input[name="ocr-mode"]:checked');
+    if (checkedRadio && checkedRadio.value === "unlimited-ocr") {
+        activeModel = "unlimited-ocr";
+    }
     const payload = {
+        model: activeModel,
         proxy: state.config.proxyEnabled ? state.config.proxyUrl : null
     };
     
@@ -1603,14 +2283,21 @@ function startInstallerPolling() {
 }
 
 async function checkInstallerStatus() {
+    let activeModel = "marker";
+    const checkedRadio = document.querySelector('input[name="ocr-mode"]:checked');
+    if (checkedRadio && checkedRadio.value === "unlimited-ocr") {
+        activeModel = "unlimited-ocr";
+    }
+    const labelPrefix = activeModel === "unlimited-ocr" ? "Unlimited-OCR" : "Local Model";
+
     try {
-        const res = await fetch("/api/local-models/status");
+        const res = await fetch(`/api/local-models/status?model=${activeModel}`);
         const status = await res.json();
         
         elements.instProgressBar.style.width = status.progress + "%";
         
         if (status.status === "idle") {
-            elements.instStatusLabel.innerText = "Local Model Installer (Idle)";
+            elements.instStatusLabel.innerText = `${labelPrefix} Installer (Idle)`;
             elements.instFileName.innerText = "Not downloading";
             elements.instPctSpeed.innerText = "0% (0 KB/s)";
             
@@ -1626,8 +2313,23 @@ async function checkInstallerStatus() {
             }
             lucide.createIcons();
         } 
+        else if (status.status === "busy") {
+            elements.instStatusLabel.innerText = "Installer (Busy)";
+            elements.instFileName.innerText = status.current_repo || "Downloader is currently busy.";
+            elements.instPctSpeed.innerText = status.error || "Please wait.";
+            
+            elements.btnInstStart.style.display = "flex";
+            elements.btnInstStart.disabled = true;
+            elements.btnInstPause.style.display = "none";
+            elements.btnInstCancel.style.display = "none";
+            
+            if (installerInterval) {
+                clearInterval(installerInterval);
+                installerInterval = null;
+            }
+        }
         else if (status.status === "fetching") {
-            elements.instStatusLabel.innerText = "Local Model Installer (Fetching...)";
+            elements.instStatusLabel.innerText = `${labelPrefix} Installer (Fetching...)`;
             elements.instFileName.innerText = status.current_repo || "Fetching model sizes...";
             elements.instPctSpeed.innerText = "Connecting to Hugging Face...";
             
@@ -1638,7 +2340,7 @@ async function checkInstallerStatus() {
             startInstallerPolling();
         } 
         else if (status.status === "downloading") {
-            elements.instStatusLabel.innerText = "Downloading Local Models...";
+            elements.instStatusLabel.innerText = `Downloading ${labelPrefix}...`;
             elements.instFileName.innerText = `${status.current_repo} - ${status.current_file}`;
             
             const mbDownloaded = (status.downloaded_bytes / (1024 * 1024)).toFixed(1);
@@ -1653,7 +2355,7 @@ async function checkInstallerStatus() {
             startInstallerPolling();
         } 
         else if (status.status === "paused") {
-            elements.instStatusLabel.innerText = "Installer (Paused)";
+            elements.instStatusLabel.innerText = `${labelPrefix} Installer (Paused)`;
             elements.instFileName.innerText = `${status.current_repo} - ${status.current_file}`;
             
             const mbDownloaded = (status.downloaded_bytes / (1024 * 1024)).toFixed(1);
@@ -1673,8 +2375,8 @@ async function checkInstallerStatus() {
             lucide.createIcons();
         } 
         else if (status.status === "completed") {
-            elements.instStatusLabel.innerText = "Installer (Installation Complete!)";
-            elements.instFileName.innerText = "All models downloaded and cached successfully.";
+            elements.instStatusLabel.innerText = `${labelPrefix} Installed!`;
+            elements.instFileName.innerText = "All model files verified and cached successfully.";
             elements.instPctSpeed.innerText = "100%";
             
             elements.btnInstStart.style.display = "flex";
@@ -1690,7 +2392,7 @@ async function checkInstallerStatus() {
             lucide.createIcons();
         } 
         else if (status.status === "failed") {
-            elements.instStatusLabel.innerText = "Installer (Download Failed)";
+            elements.instStatusLabel.innerText = `${labelPrefix} Installer (Failed)`;
             elements.instFileName.innerText = "Error: " + status.error;
             elements.instPctSpeed.innerText = "Retry installation";
             
@@ -1754,119 +2456,7 @@ function splitTextIntoChunks(text, maxChunkSize = 100000) {
     return chunks;
 }
 
-// Saved Chat Session Helpers
-function saveActiveChatSession() {
-    if (state.chatHistory.length <= 1) return; // Don't save empty chats containing only the welcome message
-    
-    // Find the first user message for a title
-    const firstUserMsg = state.chatHistory.find(m => m.role === "user");
-    let title = firstUserMsg ? firstUserMsg.content : "";
-    if (title.length > 25) {
-        title = title.substring(0, 22) + "...";
-    }
-    if (!title) {
-        title = "Chat Session " + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-    
-    if (state.currentSessionId === "new") {
-        // Create new session
-        const newSession = {
-            id: "session-" + Date.now(),
-            title: title,
-            messages: [...state.chatHistory]
-        };
-        state.currentSessionId = newSession.id;
-        state.chatSessions.unshift(newSession);
-    } else {
-        // Update existing session
-        const session = state.chatSessions.find(s => s.id === state.currentSessionId);
-        if (session) {
-            session.messages = [...state.chatHistory];
-            session.title = title; // Update title in case it changed
-        } else {
-            // Backup fallback if session disappeared
-            const newSession = {
-                id: state.currentSessionId,
-                title: title,
-                messages: [...state.chatHistory]
-            };
-            state.chatSessions.unshift(newSession);
-        }
-    }
-    
-    // Keep only last 3 sessions
-    if (state.chatSessions.length > 3) {
-        state.chatSessions.pop();
-    }
-    
-    localStorage.setItem("lingo_pdf_chat_sessions", JSON.stringify(state.chatSessions));
-    repopulateChatSessionsDropdown();
-}
 
-function clearChat() {
-    // If current conversation has user messages, save it first!
-    if (state.chatHistory.length > 1) {
-        saveActiveChatSession();
-    }
-    
-    // Clear and start new
-    state.chatHistory = [
-        { role: "assistant", content: "Hello! I'm your document assistant. Upload a PDF, extract the text layout, or select any text block, and ask me questions about it!" }
-    ];
-    state.currentSessionId = "new";
-    
-    localStorage.setItem("lingo_pdf_chat_sessions", JSON.stringify(state.chatSessions));
-    repopulateChatSessionsDropdown();
-    renderChatMessages();
-}
-
-function loadChatSession(sessionId) {
-    if (sessionId === "new") {
-        // Save current chat first if it was active
-        if (state.chatHistory.length > 1) {
-            saveActiveChatSession();
-        }
-        state.chatHistory = [
-            { role: "assistant", content: "Hello! I'm your document assistant. Upload a PDF, extract the text layout, or select any text block, and ask me questions about it!" }
-        ];
-        state.currentSessionId = "new";
-    } else {
-        // Save current chat first
-        if (state.chatHistory.length > 1) {
-            saveActiveChatSession();
-        }
-        const session = state.chatSessions.find(s => s.id === sessionId);
-        if (session) {
-            state.chatHistory = [...session.messages];
-            state.currentSessionId = session.id;
-        }
-    }
-    renderChatMessages();
-}
-
-function repopulateChatSessionsDropdown() {
-    if (!elements.chatSessionsSelect) return;
-    
-    const currentVal = state.currentSessionId;
-    elements.chatSessionsSelect.innerHTML = "";
-    
-    // Default option
-    const newOpt = document.createElement("option");
-    newOpt.value = "new";
-    newOpt.text = "New Conversation";
-    elements.chatSessionsSelect.add(newOpt);
-    
-    // Add saved sessions
-    state.chatSessions.forEach(session => {
-        const opt = document.createElement("option");
-        opt.value = session.id;
-        opt.text = session.title;
-        elements.chatSessionsSelect.add(opt);
-    });
-    
-    // Reselect active
-    elements.chatSessionsSelect.value = currentVal;
-}
 
 // Scroll PDF render area to specific page block and update toolbar display
 function scrollToPage(pageNo) {
